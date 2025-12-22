@@ -1,65 +1,92 @@
-import Image from "next/image";
+"use client";
 
-export default function Home() {
+const items = [
+  { name: "Wireless Mouse", sku: "WM-102", category: "Accessories", stock: 20 },
+  { name: "USB-C Charger", sku: "UC-309", category: "Chargers", stock: 3 },
+  { name: "Mechanical Keyboard", sku: "MK-501", category: "Keyboards", stock: 0 },
+];
+
+function status(stock: number) {
+  if (stock === 0) return { label: "Out of Stock", cls: "bg-red-100 text-red-700" };
+  if (stock <= 5) return { label: "Low Stock", cls: "bg-yellow-100 text-yellow-800" };
+  return { label: "In Stock", cls: "bg-green-100 text-green-700" };
+}
+
+export default function Page() {
   return (
-    <div className="flex min-h-screen items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex min-h-screen w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
+    <div className="min-h-screen bg-gray-50 p-8">
+      <div className="mx-auto max-w-5xl space-y-6">
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-semibold">Inventory Control Tower</h1>
+            <p className="text-gray-500">Quick prototype dashboard</p>
+          </div>
+          <button className="rounded-md bg-blue-600 px-4 py-2 text-white hover:bg-blue-700">
+            + Add item
+          </button>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
+
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+          <div className="rounded-xl bg-white p-5 shadow">
+            <div className="text-sm text-gray-500">Total items</div>
+            <div className="text-2xl font-semibold">{items.length}</div>
+          </div>
+          <div className="rounded-xl bg-white p-5 shadow">
+            <div className="text-sm text-gray-500">Low stock</div>
+            <div className="text-2xl font-semibold">
+              {items.filter((i) => i.stock > 0 && i.stock <= 5).length}
+            </div>
+          </div>
+          <div className="rounded-xl bg-white p-5 shadow">
+            <div className="text-sm text-gray-500">Out of stock</div>
+            <div className="text-2xl font-semibold">
+              {items.filter((i) => i.stock === 0).length}
+            </div>
+          </div>
+        </div>
+
+        <div className="rounded-xl bg-white shadow">
+          <div className="border-b p-4">
+            <input
+              className="w-full rounded-md border px-3 py-2"
+              placeholder="Search (prototype placeholder)"
             />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead className="text-left text-xs uppercase text-gray-500">
+                <tr className="border-b">
+                  <th className="px-6 py-3">Product</th>
+                  <th className="px-6 py-3">SKU</th>
+                  <th className="px-6 py-3">Category</th>
+                  <th className="px-6 py-3">Stock</th>
+                  <th className="px-6 py-3">Status</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y">
+                {items.map((i) => {
+                  const s = status(i.stock);
+                  return (
+                    <tr key={i.sku}>
+                      <td className="px-6 py-4">{i.name}</td>
+                      <td className="px-6 py-4 text-gray-600">{i.sku}</td>
+                      <td className="px-6 py-4 text-gray-600">{i.category}</td>
+                      <td className="px-6 py-4">{i.stock}</td>
+                      <td className="px-6 py-4">
+                        <span className={`rounded-full px-3 py-1 text-xs ${s.cls}`}>
+                          {s.label}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         </div>
-      </main>
+      </div>
     </div>
   );
 }
+
