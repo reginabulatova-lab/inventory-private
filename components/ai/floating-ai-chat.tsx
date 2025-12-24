@@ -29,9 +29,9 @@ function getAssistantReply(userText: string) {
   // Simple “inventory optimization” canned logic (replace later with real AI)
   if (t.includes("overstock")) {
     return [
-      `Here are a few **Opportunities** to reduce overstock this quarter:`,
-      `1) **Pull-in** demand where feasible (advance customer orders / internal consumption).`,
-      `2) **Cancel** or **defer** open POs for low-turn SKUs with excess coverage.`,
+      `Here are a few Opportunities to reduce overstock this quarter:`,
+      `1) Pull-in demand where feasible (advance customer orders / internal consumption).`,
+      `2) Cancel open POs for low-turn SKUs with excess coverage.`,
       `3) Rebalance: move stock to sites with higher consumption, and tighten reorder points.`,
       ``,
       `Want the full list?`,
@@ -39,7 +39,7 @@ function getAssistantReply(userText: string) {
   }
 
   return [
-    `I can propose **Opportunities** based on your question.`,
+    `I can propose Opportunities based on your question.`,
     `Try asking: “What’s the strategy to lower the overstock this quarter?”`,
   ].join("\n")
 }
@@ -51,7 +51,7 @@ export function FloatingAIChat() {
       id: makeId(),
       role: "assistant",
       content:
-        "Ask me about inventory optimization. I’ll propose **Opportunities** you can review and execute.",
+        "Ask me about inventory optimization. I’ll propose Opportunities you can review and execute.",
     },
   ])
 
@@ -104,7 +104,7 @@ export function FloatingAIChat() {
                 {m.role === "assistant" && m.content.includes("Want the full list?") && (
                   <div className="mt-3">
                     <SheetClose asChild>
-                      <Link href="/opportunities">
+                      <Link href="/inventory/opportunities">
                         <Button variant="secondary" className="h-9">
                           See all opportunities
                         </Button>
