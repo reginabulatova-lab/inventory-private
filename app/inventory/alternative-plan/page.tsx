@@ -5,7 +5,7 @@ import { HealthRiskSection } from "@/components/inventory/health-risk-section"
 import { InventoryBreakdownSection } from "@/components/inventory/inventory-breakdown-section"
 import { FloatingAIChat } from "@/components/ai/floating-ai-chat"
 
-export default function InventoryControlTowerPage() {
+export default function AlternativePlanPage() {
     return (
       <div className="min-h-screen bg-[#F8F9FC]">
         <InventoryHeader />
