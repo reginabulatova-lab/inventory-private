@@ -4,6 +4,7 @@ import { ActionBar } from "@/components/inventory/action-bar"
 import { HealthRiskSection } from "@/components/inventory/health-risk-section"
 import { InventoryBreakdownSection } from "@/components/inventory/inventory-breakdown-section"
 import { FloatingAIChat } from "@/components/ai/floating-ai-chat"
+import { OptimizationOpportunitiesSection } from "@/components/inventory/optimization-opportunities-section"
 
 export default function InventoryControlTowerPage() {
     return (
@@ -12,9 +13,11 @@ export default function InventoryControlTowerPage() {
         <InventorySubnav />
   
         <div className="px-6 pb-6">
-          <HealthRiskSection />
-          <InventoryBreakdownSection />
+        <HealthRiskSection />
+        <InventoryBreakdownSection />
+        <OptimizationOpportunitiesSection />
         </div>
+
       </div>
     )
   }  

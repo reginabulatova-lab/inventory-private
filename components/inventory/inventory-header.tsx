@@ -43,7 +43,7 @@ export function InventoryHeader() {
     <header className="sticky top-0 z-50 w-full h-[48px] border-b bg-background">
       <div className="flex h-full items-center justify-between px-6">
         {/* Left aligned container */}
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-5">
           <div className="flex items-center gap-2">
             <Button variant="ghost" size="icon" aria-label="Open menu">
               <Menu className="h-5 w-5" />
@@ -62,18 +62,16 @@ export function InventoryHeader() {
 
           <VDivider />
 
-          {/* Database icon + plan title + Plans dropdown */}
           <div className="flex items-center gap-1">
-            <div className="flex items-center gap-3">
-              <Database className="h-4 w-4 text-muted-foreground" />
-              <span className="text-sm font-medium">{planTitle}</span>
-            </div>
-
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="ghost" className="h-8 px-2 gap-1 text-sm">
-                  Plans
-                  <ChevronDown className="h-4 w-4" />
+                <Button
+                  variant="ghost"
+                  className="h-8 px-2 gap-2 text-sm font-medium"
+                >
+                  <Database className="h-4 w-4 text-muted-foreground" />
+                  <span>{planTitle}</span>
+                  <ChevronDown className="h-4 w-4 text-muted-foreground" />
                 </Button>
               </DropdownMenuTrigger>
 
@@ -92,6 +90,7 @@ export function InventoryHeader() {
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
+
         </div>
 
         {/* Right aligned container (no segmented control, one separator removed) */}

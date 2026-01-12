@@ -5,6 +5,8 @@ import { WidgetCard } from "@/components/inventory/kpi-card"
 import { PieBreakdown, PieDatum } from "@/components/inventory/pie-breakdown"
 import { BottomSheetModal } from "@/components/inventory/bottom-sheet-modal"
 import { PartbookTable } from "@/components/inventory/partbook-table"
+import { InventoryProjectionCard } from "@/components/inventory/inventory-projection-card"
+
 
 export function InventoryBreakdownSection() {
     const [modalOpen, setModalOpen] = React.useState(false)
@@ -124,6 +126,9 @@ export function InventoryBreakdownSection() {
             onSelectCategory={(cat) => handleSelect("wip", "WIP", cat)}
           />
         </WidgetCard>
+
+        <InventoryProjectionCard />
+        
       </div>
 
           <BottomSheetModal
