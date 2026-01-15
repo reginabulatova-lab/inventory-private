@@ -40,10 +40,11 @@ export function BottomSheetModal({
         aria-modal="true"
         className={cn(
           "fixed bottom-0 left-0 right-0 z-50",
-          "rounded-t-2xl border-t border-border bg-white shadow-2xl"
+          "rounded-t-2xl border-t border-border bg-white shadow-2xl",
+          "h-[50vh] max-h-[50vh] overflow-hidden"
         )}
       >
-        <div className="w-full px-6 py-4">
+        <div className="flex h-full w-full min-h-0 flex-col px-6 py-4">
           <div className="flex items-start justify-between gap-4">
             <div>
               <div className="text-base font-semibold text-foreground">{title}</div>
@@ -59,7 +60,7 @@ export function BottomSheetModal({
             </Button>
           </div>
 
-          <div className="mt-4 rounded-xl bg-background p-0">
+          <div className="mt-4 flex-1 min-h-0 overflow-y-auto rounded-xl bg-background p-0">
             {children ?? <div className="min-h-[180px]" />}
           </div>
 

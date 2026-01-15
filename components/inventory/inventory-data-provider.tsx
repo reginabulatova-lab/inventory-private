@@ -3,10 +3,28 @@
 import * as React from "react"
 import { usePathname } from "next/navigation"
 import type { Opportunity, Plan } from "@/lib/inventory/types"
+import {
+  computeHealthRiskKPIs,
+  filterOpportunitiesByMode,
+  getOpportunityMode,
+} from "@/lib/inventory/selectors"
 import { seedOpportunities } from "@/lib/inventory/seed"
 
 export type PresetKey = "current" | "today" | "tomorrow" | "eom" | "eoq" | "eoy"
 export type DateRange = { from?: Date; to?: Date }
+export type OpportunityFilters = {
+  partKeys: string[]
+  suggestedActions: Opportunity["suggestedAction"][]
+  customers: string[]
+  escLevels: Opportunity["escLevel"][]
+  statuses: Opportunity["status"][]
+}
+
+export type SnoozeRule = {
+  id: string
+  kind: "customer" | "part"
+  value: string
+}
 
 // ---------- Preset helpers (exported so Subnav can reuse) ----------
 function startOfDay(d: Date) {
@@ -39,9 +57,9 @@ export function rangeFromPreset(key: PresetKey, baseNow?: Date): DateRange {
   const now = baseNow ?? new Date()
 
   if (key === "current") {
-    // Month-to-date
+    // Current month (include remaining days so seeded future data appears)
     const from = new Date(now.getFullYear(), now.getMonth(), 1)
-    return { from: startOfDay(from), to: endOfDay(now) }
+    return { from: startOfDay(from), to: endOfDay(endOfMonth(now)) }
   }
 
   if (key === "today") {
@@ -83,17 +101,28 @@ type InventoryDataContextValue = {
   opportunities: Opportunity[]
   updateStatusByIds: (ids: string[], status: Opportunity["status"]) => void
   snoozeByIds: (ids: string[]) => void
+  unsnoozeByIds: (ids: string[]) => void
+  setStatusByIds: (ids: string[], status: Opportunity["status"]) => void
 
   /**
    * Expose a stable "now" so other computations can be consistent too if needed.
    * (Optional but useful.)
    */
   now: Date
+
+  filters: OpportunityFilters
+  setFilters: React.Dispatch<React.SetStateAction<OpportunityFilters>>
+  clearFilters: () => void
+
+  snoozeRules: SnoozeRule[]
+  addSnoozeRule: (rule: Omit<SnoozeRule, "id">) => void
+  removeSnoozeRule: (id: string) => void
 }
 
 const InventoryDataContext = React.createContext<InventoryDataContextValue | null>(null)
 
 const LS_KEY = "inventory_opportunities_v1"
+const LS_RULES_KEY = "inventory_snooze_rules_v1"
 
 function planFromPath(pathname: string | null): Plan {
   if (!pathname) return "ERP"
@@ -115,6 +144,14 @@ export function InventoryDataProvider({ children }: { children: React.ReactNode 
   const now = nowRef.current
 
   const [opportunities, setOpportunities] = React.useState<Opportunity[]>(() => loadInitial())
+  const [filters, setFilters] = React.useState<OpportunityFilters>({
+    partKeys: [],
+    suggestedActions: [],
+    customers: [],
+    escLevels: [],
+    statuses: [],
+  })
+  const [snoozeRules, setSnoozeRules] = React.useState<SnoozeRule[]>([])
 
   // ✅ single source of truth for timeframe preset + range (derived from stable now)
   const [timeframePreset, setTimeframePreset] = React.useState<PresetKey>("current")
@@ -132,7 +169,27 @@ export function InventoryDataProvider({ children }: { children: React.ReactNode 
       const raw = window.localStorage.getItem(LS_KEY)
       if (!raw) return
       const parsed = JSON.parse(raw)
-      if (Array.isArray(parsed)) setOpportunities(parsed as Opportunity[])
+      if (Array.isArray(parsed)) {
+        const normalized = (parsed as Opportunity[]).map((o) => ({
+          ...o,
+          customer: o.customer ?? o.supplier ?? "—",
+          escLevel: o.escLevel ?? 1,
+          snoozeRuleIds: o.snoozeRuleIds ?? [],
+          prevStatus: o.prevStatus,
+        }))
+        setOpportunities(normalized)
+      }
+    } catch {
+      // ignore
+    }
+  }, [])
+
+  React.useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(LS_RULES_KEY)
+      if (!raw) return
+      const parsed = JSON.parse(raw)
+      if (Array.isArray(parsed)) setSnoozeRules(parsed as SnoozeRule[])
     } catch {
       // ignore
     }
@@ -147,15 +204,131 @@ export function InventoryDataProvider({ children }: { children: React.ReactNode 
     }
   }, [opportunities])
 
+  React.useEffect(() => {
+    try {
+      window.localStorage.setItem(LS_RULES_KEY, JSON.stringify(snoozeRules))
+    } catch {
+      // ignore
+    }
+  }, [snoozeRules])
+
   const updateStatusByIds = React.useCallback((ids: string[], status: Opportunity["status"]) => {
     if (ids.length === 0) return
-    setOpportunities((prev) => prev.map((o) => (ids.includes(o.id) ? { ...o, status } : o)))
+    setOpportunities((prev) =>
+      prev.map((o) => (ids.includes(o.id) ? { ...o, status } : o))
+    )
   }, [])
 
   const snoozeByIds = React.useCallback(
-    (ids: string[]) => updateStatusByIds(ids, "Snoozed"),
-    [updateStatusByIds]
+    (ids: string[]) => {
+      if (ids.length === 0) return
+      setOpportunities((prev) =>
+        prev.map((o) => {
+          if (!ids.includes(o.id)) return o
+          if (o.status === "Snoozed") return o
+          return {
+            ...o,
+            status: "Snoozed",
+            prevStatus: o.status,
+          }
+        })
+      )
+    },
+    []
   )
+
+  const unsnoozeByIds = React.useCallback(
+    (ids: string[]) => {
+      if (ids.length === 0) return
+      setOpportunities((prev) =>
+        prev.map((o) => {
+          if (!ids.includes(o.id)) return o
+          if (o.status !== "Snoozed") return o
+          return {
+            ...o,
+            status: o.prevStatus ?? "To Do",
+            prevStatus: undefined,
+            snoozeRuleIds: [],
+          }
+        })
+      )
+    },
+    []
+  )
+
+  const setStatusByIds = React.useCallback((ids: string[], status: Opportunity["status"]) => {
+    if (ids.length === 0) return
+    setOpportunities((prev) =>
+      prev.map((o) => {
+        if (!ids.includes(o.id)) return o
+        if (status === "Snoozed") {
+          if (o.status === "Snoozed") return o
+          return {
+            ...o,
+            status: "Snoozed",
+            prevStatus: o.status,
+          }
+        }
+        return {
+          ...o,
+          status,
+          prevStatus: undefined,
+          snoozeRuleIds: [],
+        }
+      })
+    )
+  }, [])
+
+  const applyRule = React.useCallback((rule: SnoozeRule, rows: Opportunity[]) => {
+    return rows.map((o) => {
+      const matches =
+        rule.kind === "customer"
+          ? o.customer === rule.value
+          : buildPartKey(o) === rule.value
+      if (!matches) return o
+      if (o.status === "Snoozed" && o.snoozeRuleIds?.includes(rule.id)) return o
+      return {
+        ...o,
+        status: "Snoozed" as Opportunity["status"],
+        prevStatus: o.status === "Snoozed" ? o.prevStatus : o.status,
+        snoozeRuleIds: Array.from(new Set([...(o.snoozeRuleIds ?? []), rule.id])),
+      }
+    })
+  }, [])
+
+  const addSnoozeRule = React.useCallback(
+    (rule: Omit<SnoozeRule, "id">) => {
+      const next: SnoozeRule = { ...rule, id: `${Date.now()}_${Math.random()}` }
+      setSnoozeRules((prev) => {
+        const exists = prev.some((r) => r.kind === next.kind && r.value === next.value)
+        return exists ? prev : [next, ...prev]
+      })
+      setOpportunities((prev) => applyRule(next, prev))
+    },
+    [applyRule]
+  )
+
+  const removeSnoozeRule = React.useCallback((id: string) => {
+    setSnoozeRules((prev) => prev.filter((r) => r.id !== id))
+    setOpportunities((prev) =>
+      prev.map((o) => {
+        if (!o.snoozeRuleIds?.includes(id)) return o
+        const nextRuleIds = o.snoozeRuleIds.filter((ruleId) => ruleId !== id)
+        if (nextRuleIds.length > 0) {
+          return { ...o, snoozeRuleIds: nextRuleIds }
+        }
+        if (o.status === "Snoozed") {
+          return {
+            ...o,
+            status: o.prevStatus ?? "To Do",
+            prevStatus: undefined,
+            snoozeRuleIds: [],
+          }
+        }
+        return { ...o, snoozeRuleIds: [] }
+      })
+    )
+  }, [])
 
   const value = React.useMemo<InventoryDataContextValue>(
     () => ({
@@ -167,9 +340,38 @@ export function InventoryDataProvider({ children }: { children: React.ReactNode 
       opportunities,
       updateStatusByIds,
       snoozeByIds,
+      unsnoozeByIds,
+      setStatusByIds,
       now,
+      filters,
+      setFilters,
+      clearFilters: () =>
+        setFilters({
+          partKeys: [],
+          suggestedActions: [],
+          customers: [],
+          escLevels: [],
+          statuses: [],
+        }),
+      snoozeRules,
+      addSnoozeRule,
+      removeSnoozeRule,
     }),
-    [plan, dateRange, timeframePreset, opportunities, updateStatusByIds, snoozeByIds, now]
+    [
+      plan,
+      dateRange,
+      timeframePreset,
+      opportunities,
+      updateStatusByIds,
+      snoozeByIds,
+      unsnoozeByIds,
+      setStatusByIds,
+      now,
+      filters,
+      snoozeRules,
+      addSnoozeRule,
+      removeSnoozeRule,
+    ]
   )
 
   return <InventoryDataContext.Provider value={value}>{children}</InventoryDataContext.Provider>
@@ -182,7 +384,7 @@ export function useInventoryData() {
 }
 
 export function useFilteredOpportunities(options?: { includeSnoozed?: boolean }) {
-  const { plan, dateRange, opportunities, timeframePreset } = useInventoryData()
+  const { plan, dateRange, opportunities, timeframePreset, filters } = useInventoryData()
   const { includeSnoozed = true } = options ?? {}
 
   return React.useMemo(() => {
@@ -200,6 +402,26 @@ export function useFilteredOpportunities(options?: { includeSnoozed?: boolean })
         return t >= from && t <= to
       })
 
+    const applyFilters = (rows: Opportunity[]) => {
+      let res = rows
+      if (filters.partKeys.length > 0) {
+        res = res.filter((o) => filters.partKeys.includes(buildPartKey(o)))
+      }
+      if (filters.suggestedActions.length > 0) {
+        res = res.filter((o) => filters.suggestedActions.includes(o.suggestedAction))
+      }
+      if (filters.customers.length > 0) {
+        res = res.filter((o) => filters.customers.includes(o.customer))
+      }
+      if (filters.escLevels.length > 0) {
+        res = res.filter((o) => filters.escLevels.includes(o.escLevel))
+      }
+      if (filters.statuses.length > 0) {
+        res = res.filter((o) => filters.statuses.includes(o.status))
+      }
+      return res
+    }
+
     // 1) normal filtering
     let res = matches(baseFrom, baseTo)
 
@@ -215,7 +437,7 @@ export function useFilteredOpportunities(options?: { includeSnoozed?: boolean })
       }
     }
 
-    return res
+    return applyFilters(res)
   }, [
     plan,
     dateRange.from,
@@ -223,7 +445,37 @@ export function useFilteredOpportunities(options?: { includeSnoozed?: boolean })
     opportunities,
     includeSnoozed,
     timeframePreset,
+    filters.partKeys,
+    filters.suggestedActions,
+    filters.customers,
+    filters.escLevels,
+    filters.statuses,
   ])
+}
+
+export function buildPartKey(o: Opportunity) {
+  return `${o.partNumber} - ${o.partName}`
+}
+
+export function useOpportunitiesForFilters() {
+  const { plan, dateRange, opportunities } = useInventoryData()
+
+  return React.useMemo(() => {
+    const baseFrom = dateRange.from ? dateRange.from.getTime() : -Infinity
+    const baseTo = dateRange.to ? dateRange.to.getTime() : Infinity
+
+    const base = opportunities.filter((o) => {
+      if (o.plan !== plan) return false
+      if (o.status === "Snoozed") return false
+      const t = new Date(o.suggestedDate).getTime()
+      if (!Number.isFinite(t)) return false
+      return t >= baseFrom && t <= baseTo
+    })
+
+    const kpis = computeHealthRiskKPIs(base, dateRange.from, dateRange.to)
+    const mode = getOpportunityMode(kpis.overstockEur, kpis.understockEur)
+    return filterOpportunitiesByMode(base, mode)
+  }, [plan, dateRange.from, dateRange.to, opportunities])
 }
 
   

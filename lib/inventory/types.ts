@@ -22,7 +22,12 @@ export type Opportunity = {
 
   // Extra fields used by Control Tower table / widgets later
   supplier: string
+  customer: string
+  escLevel: 1 | 2 | 3 | 4
   plant: string
   supplyType: "PO" | "PR"
   cashImpactEur: number // numeric so widgets can aggregate
+
+  snoozeRuleIds?: string[]
+  prevStatus?: OpportunityStatus
 }

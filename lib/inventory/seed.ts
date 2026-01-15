@@ -30,6 +30,7 @@ const PARTS = [
 ]
 
 const SUPPLIERS = ["LunaCraft", "Celestial Dynamics", "AeroForge", "NovaComponents", "Orion Industrial"]
+const CUSTOMERS = ["SkyWorks", "BlueJet", "AeroLink", "StellarWings", "Atlas Airframes"]
 const ASSIGNEES = ["A. Martin", "S. Dubois", "C. Leroy", "M. Rossi", "–"]
 const PLANTS = ["1123", "3535", "2041", "8810"]
 
@@ -52,6 +53,14 @@ function weightedAction(r: () => number): SuggestedAction {
   return "Pull in"
 }
 
+function weightedEscLevel(r: () => number): 1 | 2 | 3 | 4 {
+  const x = r()
+  if (x < 0.45) return 1
+  if (x < 0.75) return 2
+  if (x < 0.92) return 3
+  return 4
+}
+
 /**
  * Generates "realistic enough" opportunities:
  * - Different distributions per plan
@@ -72,8 +81,10 @@ export function seedOpportunities(plan: Plan, count = 220): Opportunity[] {
   for (let i = 0; i < count; i++) {
     const part = pick(r, PARTS)
     const supplier = pick(r, SUPPLIERS)
+    const customer = pick(r, CUSTOMERS)
     const plant = pick(r, PLANTS)
     const status = weightedStatus(r)
+    const escLevel = weightedEscLevel(r)
 
     // ALT plan skew: more Pull-in actions
     const action = plan === "ALT" ? (r() < 0.45 ? "Pull in" : weightedAction(r)) : weightedAction(r)
@@ -113,6 +124,8 @@ export function seedOpportunities(plan: Plan, count = 220): Opportunity[] {
       status,
       assignee: pick(r, ASSIGNEES),
       supplier,
+      customer,
+      escLevel,
       plant,
       supplyType,
       cashImpactEur,

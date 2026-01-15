@@ -5,6 +5,18 @@ import { WidgetCard } from "@/components/inventory/kpi-card"
 import { PieBreakdown, PieDatum } from "@/components/inventory/pie-breakdown"
 import { BottomSheetModal } from "@/components/inventory/bottom-sheet-modal"
 import { OpportunitiesTable } from "@/components/inventory/opportunities-table"
+import {
+  useFilteredOpportunities,
+  useInventoryData,
+} from "@/components/inventory/inventory-data-provider"
+import {
+  buildConcentrationBuckets,
+  capOpportunitiesTotal,
+  computeHealthRiskKPIs,
+  filterOpportunitiesByMode,
+  getOpportunitiesScale,
+  getOpportunityMode,
+} from "@/lib/inventory/selectors"
 
 import {
   BarChart,
@@ -24,40 +36,92 @@ type Active = {
 } | null
 
 
-const TYPE_DATA: PieDatum[] = [
-  { name: "Push Out", value: 1800, displayValue: "1,8 M€", percent: "85%", color: "#2563EB" },
-  { name: "Cancel", value: 500, displayValue: "0,5 M€", percent: "15%", color: "#19A7B0" },
-]
+const STATUS_COLORS = ["#2563EB", "#19A7B0", "#F59E0B"]
+const TYPE_COLORS = ["#2563EB", "#19A7B0", "#F59E0B"]
 
-const STATUS_DATA: PieDatum[] = [
-  { name: "In progress", value: 15, displayValue: "15", percent: "32%", color: "#2563EB" },
-  { name: "Not prioritized", value: 12, displayValue: "12", percent: "26%", color: "#19A7B0" },
-  { name: "Completed", value: 12, displayValue: "12", percent: "25%", color: "#F59E0B" },
-  { name: "Prioritized", value: 8, displayValue: "8", percent: "17%", color: "#F97316" },
-]
+function formatEurCompact(value: number) {
+  const abs = Math.abs(value)
+  if (abs >= 1_000_000) return `€${(value / 1_000_000).toFixed(1)}M`
+  if (abs >= 1_000) return `€${(value / 1_000).toFixed(0)}K`
+  return `€${Math.round(value)}`
+}
 
-// mock “opportunities concentration” buckets
-const CONCENTRATION = [
-  { bucket: "10%", value: 380 },
-  { bucket: "20%", value: 350 },
-  { bucket: "30%", value: 210 },
-  { bucket: "40%", value: 180 },
-  { bucket: "50%", value: 140 },
-  { bucket: "60%", value: 120 },
-  { bucket: "70%", value: 95 },
-  { bucket: "80%", value: 80 },
-  { bucket: "90%", value: 45 },
-  { bucket: "100%", value: 15 },
-]
+function formatPct(value: number, total: number) {
+  if (!total) return "0%"
+  return `${Math.round((value / total) * 100)}%`
+}
 
-function formatKeur(v: number) {
-  if (v >= 1000) return `${(v / 1000).toFixed(1)} M€`
-  return `${Math.round(v)} K€`
+function BarTooltip({
+  active,
+  payload,
+  label,
+}: {
+  active?: boolean
+  payload?: Array<{ value?: number }>
+  label?: string | number
+}) {
+  if (!active || !payload?.length) return null
+  const value = payload[0]?.value ?? 0
+  return (
+    <div className="rounded-lg border bg-white px-3 py-2 text-sm shadow-sm">
+      <div className="text-muted-foreground">{label}</div>
+      <div className="font-medium text-foreground">{formatEurCompact(Number(value))}</div>
+    </div>
+  )
+}
+
+function rescaleRows<T extends { value: number }>(
+  rows: T[],
+  newTotal: number
+) {
+  const sum = rows.reduce((acc, row) => acc + row.value, 0) || 1
+  const scaled = rows.map((row) => ({
+    ...row,
+    value: Math.round((row.value / sum) * newTotal),
+  }))
+  const diff = newTotal - scaled.reduce((acc, row) => acc + row.value, 0)
+  if (scaled.length) scaled[0].value += diff
+  return scaled
 }
 
 export function OptimizationOpportunitiesSection() {
   const [open, setOpen] = React.useState(false)
   const [active, setActive] = React.useState<Active>(null)
+  const { dateRange } = useInventoryData()
+  const opportunities = useFilteredOpportunities({ includeSnoozed: false })
+  const allOpportunities = useFilteredOpportunities({ includeSnoozed: true })
+
+  const kpis = computeHealthRiskKPIs(opportunities, dateRange.from, dateRange.to)
+  const mode = getOpportunityMode(kpis.overstockEur, kpis.understockEur)
+
+  const scopedOpportunities = React.useMemo(
+    () => filterOpportunitiesByMode(opportunities, mode),
+    [opportunities, mode]
+  )
+  const scopedAll = React.useMemo(
+    () => filterOpportunitiesByMode(allOpportunities, mode),
+    [allOpportunities, mode]
+  )
+
+  const baseTotal = React.useMemo(
+    () => scopedAll.reduce((sum, opp) => sum + opp.cashImpactEur, 0),
+    [scopedAll]
+  )
+
+  const targetTotal = React.useMemo(
+    () =>
+      capOpportunitiesTotal(baseTotal, {
+        inventoryEur: kpis.inventoryEur,
+        overstockEur: kpis.overstockEur,
+        understockEur: kpis.understockEur,
+        mode,
+      }),
+    [baseTotal, kpis.inventoryEur, kpis.overstockEur, kpis.understockEur, mode]
+  )
+  const scale = React.useMemo(
+    () => getOpportunitiesScale(baseTotal, targetTotal),
+    [baseTotal, targetTotal]
+  )
 
   // same “only one active at a time” UX as Inventory Breakdown
   const [selected, setSelected] = React.useState<{
@@ -65,6 +129,85 @@ export function OptimizationOpportunitiesSection() {
     status: string | null
     concentration: string | null
   }>({ type: null, status: null, concentration: null })
+
+  const typeData = React.useMemo<PieDatum[]>(() => {
+    const totals = scopedOpportunities.reduce(
+      (acc, o) => {
+        acc[o.suggestedAction] =
+          (acc[o.suggestedAction] ?? 0) + Math.round(o.cashImpactEur * scale)
+        return acc
+      },
+      { "Push Out": 0, Cancel: 0, "Pull in": 0 } as Record<string, number>
+    )
+
+    const rows =
+      mode === "overstock"
+        ? [
+            { name: "Push Out", value: totals["Push Out"], color: TYPE_COLORS[0] },
+            { name: "Cancel", value: totals.Cancel, color: TYPE_COLORS[1] },
+          ]
+        : [{ name: "Pull in", value: totals["Pull in"], color: TYPE_COLORS[2] }]
+
+    const scaled = rescaleRows(rows, targetTotal)
+    const scaledTotal = scaled.reduce((sum, row) => sum + row.value, 0)
+
+    return scaled.map((row) => ({
+      name: row.name,
+      value: row.value,
+      displayValue: formatEurCompact(row.value),
+      percent: formatPct(row.value, scaledTotal),
+      color: row.color,
+    }))
+  }, [scopedOpportunities, targetTotal, mode, scale])
+
+  const typeTotal = React.useMemo(
+    () => typeData.reduce((sum, row) => sum + row.value, 0),
+    [typeData]
+  )
+
+  const statusData = React.useMemo<PieDatum[]>(() => {
+    const totals = scopedOpportunities.reduce(
+      (acc, o) => {
+        if (o.status === "Snoozed") return acc
+        acc[o.status] = (acc[o.status] ?? 0) + Math.round(o.cashImpactEur * scale)
+        return acc
+      },
+      { "In Progress": 0, "To Do": 0, Done: 0 } as Record<string, number>
+    )
+
+    const rows = [
+      { name: "In Progress", value: totals["In Progress"], color: STATUS_COLORS[0] },
+      { name: "To Do", value: totals["To Do"], color: STATUS_COLORS[1] },
+      { name: "Done", value: totals.Done, color: STATUS_COLORS[2] },
+    ]
+
+    const scaled = rescaleRows(rows, targetTotal)
+    const scaledTotal = scaled.reduce((sum, row) => sum + row.value, 0)
+
+    return scaled.map((row) => ({
+      name: row.name,
+      value: row.value,
+      displayValue: formatEurCompact(row.value),
+      percent: formatPct(row.value, scaledTotal),
+      color: row.color,
+    }))
+  }, [scopedOpportunities, targetTotal, scale])
+
+  const statusTotal = React.useMemo(
+    () => statusData.reduce((sum, row) => sum + row.value, 0),
+    [statusData]
+  )
+
+  const concentrationData = React.useMemo(() => {
+    const buckets = buildConcentrationBuckets(scopedOpportunities)
+    const rows = buckets.map((bucket) => ({
+      bucket: bucket.bucket,
+      value: Math.round(bucket.totalEur * scale),
+    }))
+
+    const scaled = rescaleRows(rows, targetTotal)
+    return scaled
+  }, [scopedOpportunities, targetTotal])
 
   const close = () => {
     setOpen(false)
@@ -107,8 +250,8 @@ export function OptimizationOpportunitiesSection() {
         <WidgetCard title="Opportunities by type" size="m">
           <PieBreakdown
             totalLabel="Total"
-            totalValue="2,3 M€"
-            data={TYPE_DATA}
+            totalValue={formatEurCompact(typeTotal)}
+            data={typeData}
             selectedCategory={selected.type}
             onSelectCategory={(cat) => openModal("type", cat)}
           />
@@ -118,8 +261,8 @@ export function OptimizationOpportunitiesSection() {
         <WidgetCard title="Opportunities by status" size="m">
           <PieBreakdown
             totalLabel="Total"
-            totalValue="1,2 M€"
-            data={STATUS_DATA}
+            totalValue={formatEurCompact(statusTotal)}
+            data={statusData}
             selectedCategory={selected.status}
             onSelectCategory={(cat) => openModal("status", cat)}
           />
@@ -129,18 +272,15 @@ export function OptimizationOpportunitiesSection() {
         <WidgetCard title="Opportunities Concentration" size="m">
           <div className="h-[220px] w-full">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={CONCENTRATION} margin={{ top: 8, right: 8, left: 8, bottom: 8 }}>
+              <BarChart data={concentrationData} margin={{ top: 8, right: 8, left: 8, bottom: 8 }}>
                 <CartesianGrid opacity={0.25} />
                 <XAxis dataKey="bucket" tickLine={false} axisLine={false} />
                 <YAxis
                   tickLine={false}
                   axisLine={false}
-                  tickFormatter={(v) => formatKeur(Number(v))}
+                  tickFormatter={(v) => formatEurCompact(Number(v))}
                 />
-                <Tooltip
-                  cursor={{ fill: "hsl(var(--muted))", opacity: 0.35 }}
-                  formatter={(v: any) => formatKeur(Number(v))}
-                />
+                <Tooltip cursor={{ fill: "hsl(var(--muted))", opacity: 0.35 }} content={<BarTooltip />} />
                 <Bar
                   dataKey="value"
                   radius={[6, 6, 0, 0]}

@@ -2,6 +2,8 @@ import type { Opportunity } from "@/lib/inventory/types"
 
 export type OpportunitiesByStatus = Record<Opportunity["status"], number>
 export type OpportunitiesByAction = Record<Opportunity["suggestedAction"], number>
+export type OpportunityMode = "overstock" | "understock"
+export type ConcentrationBucket = { bucket: string; ids: string[]; totalEur: number }
 
 export function groupOpportunitiesByStatus(opps: Opportunity[]): OpportunitiesByStatus {
   return opps.reduce(
@@ -63,4 +65,62 @@ export function computeHealthRiskKPIs(opps: Opportunity[], from?: Date, to?: Dat
     overstockParts,
     understockParts,
   }
+}
+
+export function getOpportunityMode(overstockEur: number, understockEur: number): OpportunityMode {
+  return overstockEur >= understockEur ? "overstock" : "understock"
+}
+
+export function filterOpportunitiesByMode(opps: Opportunity[], mode: OpportunityMode) {
+  if (mode === "overstock") {
+    return opps.filter((o) => o.suggestedAction !== "Pull in")
+  }
+  return opps.filter((o) => o.suggestedAction === "Pull in")
+}
+
+export function capOpportunitiesTotal(
+  baseTotal: number,
+  options: {
+    inventoryEur: number
+    overstockEur: number
+    understockEur: number
+    mode: OpportunityMode
+  }
+) {
+  const { inventoryEur, overstockEur, understockEur, mode } = options
+  const sumCap = Math.max(0, Math.min(inventoryEur, overstockEur + understockEur))
+  let cap = sumCap
+  if (mode === "overstock" && overstockEur > 0) {
+    cap = Math.min(cap, Math.round(overstockEur * 0.9))
+  }
+
+  if (cap <= 0 || baseTotal <= 0) return 0
+
+  const minTotal = Math.min(cap, 150_000)
+  if (baseTotal < minTotal) return minTotal
+  if (baseTotal > cap) return cap
+  return baseTotal
+}
+
+export function getOpportunitiesScale(baseTotal: number, targetTotal: number) {
+  if (baseTotal <= 0 || targetTotal <= 0) return 0
+  return targetTotal / baseTotal
+}
+
+export function buildConcentrationBuckets(opps: Opportunity[]): ConcentrationBucket[] {
+  const sorted = [...opps].sort((a, b) => b.cashImpactEur - a.cashImpactEur)
+  const bucketCount = 10
+  const bucketSize = Math.max(1, Math.ceil(sorted.length / bucketCount))
+
+  return Array.from({ length: bucketCount }, (_, i) => {
+    const start = i * bucketSize
+    const end = start + bucketSize
+    const slice = sorted.slice(start, end)
+    const totalEur = slice.reduce((sum, opp) => sum + opp.cashImpactEur, 0)
+    return {
+      bucket: `${(i + 1) * 10}%`,
+      ids: slice.map((opp) => opp.id),
+      totalEur,
+    }
+  })
 }
