@@ -11,6 +11,7 @@ import {
   useInventoryData,
 } from "@/components/inventory/inventory-data-provider"
 import { computeInventoryBreakdown } from "@/lib/inventory/breakdown"
+import { computeHealthRiskKPIs } from "@/lib/inventory/selectors"
 
 // --- formatting helpers (match your PieBreakdown style) ---
 function formatEurCompact(value: number) {
@@ -23,22 +24,11 @@ function formatPct(n?: number) {
   return `${Math.round(n ?? 0)}%`
 }
 
-// --- rules: breakdown totals must be <= KPI inventory total ---
-// We don’t have KPI inventory total here, so we enforce an internal rule:
-// Breakdown total is a fraction of “inventory exposure” implied by opps.
-// Tune these if you want bigger/smaller charts.
-function breakdownCapFromOpps(oppsCount: number) {
-  // This is the key that prevents breakdown > KPI:
-  // KPI Inventory will usually be higher because it's computed differently (health-risk-section).
-  // We cap breakdown to a plausible share.
-  //
-  // Example: 64 opps => cap ~ 8.0M (64 * 125k)
-  return oppsCount * 125_000
-}
-
 export function InventoryBreakdownSection() {
   const { dateRange } = useInventoryData()
   const opportunities = useFilteredOpportunities({ includeSnoozed: false })
+  const kpis = computeHealthRiskKPIs(opportunities, dateRange.from, dateRange.to)
+  const inventoryTotal = Math.max(0, kpis.inventoryEur)
 
   const PIE_COLORS = [
     "#2563EB", // blue
@@ -52,11 +42,10 @@ export function InventoryBreakdownSection() {
   // base breakdown generated from opps + timeframe
   const raw = computeInventoryBreakdown(opportunities, dateRange.from, dateRange.to)
 
-  // ✅ enforce the “breakdown < KPI inventory” rule by capping total
-  const cappedTotal = React.useMemo(() => {
-    const cap = breakdownCapFromOpps(opportunities.length)
-    return Math.min(raw.totalEur, cap)
-  }, [raw.totalEur, opportunities.length])
+  // Rule: stock status equals KPI inventory; other breakdowns are lower
+  const topProgramsTotal = inventoryTotal
+  const stockStatusTotal = inventoryTotal
+  const wipTotal = Math.round(inventoryTotal * 0.35)
 
 // ✅ rescale helper: keep distribution but match a new total
 // NOTE: in your breakdown types, `percent` can be string, so we ignore it here.
@@ -84,21 +73,17 @@ const rescaleRows = React.useCallback(
 
   // ✅ apply cappedTotal to ALL three charts, so they remain consistent
   const topProgramsRows = React.useMemo(
-    () => rescaleRows(raw.topPrograms, cappedTotal),
-    [raw.topPrograms, cappedTotal, rescaleRows]
+    () => rescaleRows(raw.topPrograms, topProgramsTotal),
+    [raw.topPrograms, topProgramsTotal, rescaleRows]
   )
 
   const stockStatusRows = React.useMemo(() => {
-    // stock status is often close to inventory, but can be slightly lower
-    const target = Math.round(cappedTotal * 0.95)
-    return rescaleRows(raw.stockStatus, target)
-  }, [raw.stockStatus, cappedTotal, rescaleRows])
+    return rescaleRows(raw.stockStatus, stockStatusTotal)
+  }, [raw.stockStatus, stockStatusTotal, rescaleRows])
 
   const wipRows = React.useMemo(() => {
-    // WIP is a smaller portion
-    const target = Math.round(cappedTotal * 0.35)
-    return rescaleRows(raw.wip, target)
-  }, [raw.wip, cappedTotal, rescaleRows])
+    return rescaleRows(raw.wip, wipTotal)
+  }, [raw.wip, wipTotal, rescaleRows])
 
   // ✅ map to PieDatum with formatted legend values + percent
   const topProgramsData = React.useMemo<PieDatum[]>(
@@ -205,7 +190,7 @@ const rescaleRows = React.useCallback(
         <WidgetCard title="Top 10 Programs" size="m">
           <PieBreakdown
             totalLabel="Total"
-            totalValue={formatEurCompact(cappedTotal)}
+            totalValue={formatEurCompact(topProgramsTotal)}
             data={topProgramsData}
             selectedCategory={selected.topPrograms}
             onSelectCategory={(cat) => handleSelect("topPrograms", "Top 10 Programs", cat)}
@@ -215,7 +200,7 @@ const rescaleRows = React.useCallback(
         <WidgetCard title="Stock Status" tooltip="Inventory split by current stock status." size="m">
           <PieBreakdown
             totalLabel="Total"
-            totalValue={formatEurCompact(Math.round(cappedTotal * 0.95))}
+            totalValue={formatEurCompact(stockStatusTotal)}
             data={stockStatusData}
             selectedCategory={selected.stockStatus}
             onSelectCategory={(cat) => handleSelect("stockStatus", "Stock Status", cat)}
@@ -225,7 +210,7 @@ const rescaleRows = React.useCallback(
         <WidgetCard title="WIP" tooltip="Work-in-progress coverage split." size="m">
           <PieBreakdown
             totalLabel="Total"
-            totalValue={formatEurCompact(Math.round(cappedTotal * 0.35))}
+            totalValue={formatEurCompact(wipTotal)}
             data={wipData}
             selectedCategory={selected.wip}
             onSelectCategory={(cat) => handleSelect("wip", "WIP", cat)}

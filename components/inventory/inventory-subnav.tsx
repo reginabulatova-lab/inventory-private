@@ -153,12 +153,24 @@ export function InventorySubnav() {
                   <PopoverTrigger asChild>
                     <Button variant="outline" size="icon" className="relative h-10 w-10 bg-white">
                       <Filter className="h-4 w-4 text-muted-foreground" />
-                      {filters.partKeys.length > 0 ||
-                      filters.suggestedActions.length > 0 ||
-                      filters.customers.length > 0 ||
-                      filters.escLevels.length > 0 ||
-                      filters.statuses.length > 0 ? (
-                        <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-red-500" />
+                      {[
+                        filters.partKeys.length > 0,
+                        filters.suggestedActions.length > 0,
+                        filters.customers.length > 0,
+                        filters.escLevels.length > 0,
+                        filters.statuses.length > 0,
+                      ].filter(Boolean).length > 0 ? (
+                        <span className="absolute -right-1 -top-1 flex h-5 min-w-[20px] items-center justify-center rounded-full bg-foreground px-1 text-[10px] font-semibold text-background">
+                          {
+                            [
+                              filters.partKeys.length > 0,
+                              filters.suggestedActions.length > 0,
+                              filters.customers.length > 0,
+                              filters.escLevels.length > 0,
+                              filters.statuses.length > 0,
+                            ].filter(Boolean).length
+                          }
+                        </span>
                       ) : null}
                     </Button>
                   </PopoverTrigger>

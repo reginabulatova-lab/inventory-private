@@ -136,7 +136,16 @@ export function PieBreakdown({
       <div className="h-[170px] w-[240px]">
         <ResponsiveContainer width="100%" height="100%">
           <PieChart>
-            <Tooltip contentStyle={{ borderRadius: 10 }} />
+            <Tooltip
+              contentStyle={{ borderRadius: 10 }}
+              formatter={((value: unknown, name: unknown, props: any) => {
+                const payload = props?.payload as PieDatum | undefined
+                const display = payload?.displayValue ?? formatEurCompact(Number(value ?? 0))
+                const percent = payload?.percent ? ` (${payload.percent})` : ""
+                const label = typeof name === "string" ? name : ""
+                return [`${display}${percent}`, label]
+              }) as any}
+            />
 
             <Pie
               data={data}

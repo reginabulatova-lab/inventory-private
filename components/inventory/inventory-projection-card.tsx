@@ -13,6 +13,11 @@ import {
 } from "recharts"
 import { WidgetCard } from "@/components/inventory/kpi-card"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import {
+  applyOpportunityFilters,
+  useInventoryData,
+} from "@/components/inventory/inventory-data-provider"
+import { computeHealthRiskKPIs } from "@/lib/inventory/selectors"
 
 type ViewMode = "quarter" | "month"
 
@@ -22,7 +27,7 @@ type Point = {
   opp: number // in K€
 }
 
-const MONTH_DATA: Point[] = [
+const ERP_MONTH_TEMPLATE = [
   { label: "Jan 2025", erp: 820, opp: 190 },
   { label: "Feb 2025", erp: 960, opp: 210 },
   { label: "Mar 2025", erp: 860, opp: 70 },
@@ -35,18 +40,70 @@ const MONTH_DATA: Point[] = [
   { label: "Oct 2025", erp: 490, opp: 135 },
   { label: "Nov 2025", erp: 730, opp: 120 },
   { label: "Dec 2025", erp: 620, opp: 120 },
-]
+].map((d) => d.erp)
 
-const QUARTER_DATA: Point[] = [
+const ERP_QUARTER_TEMPLATE = [
   { label: "Q1 2025", erp: 880, opp: 157 },
   { label: "Q2 2025", erp: 600, opp: 68 },
   { label: "Q3 2025", erp: 543, opp: 62 },
   { label: "Q4 2025", erp: 613, opp: 125 },
-]
+].map((d) => d.erp)
 
 function formatKeur(v: number) {
   if (v >= 1000) return `${(v / 1000).toFixed(1)} M€`
   return `${Math.round(v)} K€`
+}
+
+function startOfMonth(d: Date) {
+  return new Date(d.getFullYear(), d.getMonth(), 1)
+}
+
+function startOfQuarter(d: Date) {
+  const q = Math.floor(d.getMonth() / 3) * 3
+  return new Date(d.getFullYear(), q, 1)
+}
+
+const MONTH_LABELS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+
+function formatMonthLabel(d: Date) {
+  return `${MONTH_LABELS[d.getMonth()]} ${d.getFullYear()}`
+}
+
+function buildMonthSeries(start: Date, opps: { suggestedDate: string; cashImpactEur: number }[]) {
+  const startDate = startOfMonth(start)
+  return Array.from({ length: 12 }, (_, i) => {
+    const monthStart = new Date(startDate.getFullYear(), startDate.getMonth() + i, 1)
+    const monthEnd = new Date(startDate.getFullYear(), startDate.getMonth() + i + 1, 0, 23, 59, 59, 999)
+    const totalEur = opps.reduce((sum, o) => {
+      const t = new Date(o.suggestedDate).getTime()
+      if (!Number.isFinite(t)) return sum
+      if (t >= monthStart.getTime() && t <= monthEnd.getTime()) return sum + o.cashImpactEur
+      return sum
+    }, 0)
+    return {
+      label: formatMonthLabel(monthStart),
+      oppEur: totalEur,
+    }
+  })
+}
+
+function buildQuarterSeries(start: Date, opps: { suggestedDate: string; cashImpactEur: number }[]) {
+  const startDate = startOfQuarter(start)
+  return Array.from({ length: 4 }, (_, i) => {
+    const quarterStart = new Date(startDate.getFullYear(), startDate.getMonth() + i * 3, 1)
+    const quarterEnd = new Date(startDate.getFullYear(), startDate.getMonth() + i * 3 + 3, 0, 23, 59, 59, 999)
+    const totalEur = opps.reduce((sum, o) => {
+      const t = new Date(o.suggestedDate).getTime()
+      if (!Number.isFinite(t)) return sum
+      if (t >= quarterStart.getTime() && t <= quarterEnd.getTime()) return sum + o.cashImpactEur
+      return sum
+    }, 0)
+    const q = Math.floor(quarterStart.getMonth() / 3) + 1
+    return {
+      label: `Q${q} ${quarterStart.getFullYear()}`,
+      oppEur: totalEur,
+    }
+  })
 }
 
 function tooltipValueFormatter(value: any) {
@@ -123,8 +180,59 @@ function InventoryProjectionTooltip({
 
 export function InventoryProjectionCard() {
   const [mode, setMode] = React.useState<ViewMode>("month")
+  const { opportunities, plan, filters } = useInventoryData()
 
-  const data = mode === "month" ? MONTH_DATA : QUARTER_DATA
+  const opps = React.useMemo(() => {
+    const base = opportunities.filter((o) => o.plan === plan && o.status !== "Snoozed")
+    return applyOpportunityFilters(base, filters)
+  }, [
+    opportunities,
+    plan,
+    filters.partKeys,
+    filters.suggestedActions,
+    filters.customers,
+    filters.escLevels,
+    filters.statuses,
+  ])
+
+  const kpis = computeHealthRiskKPIs(opps)
+
+  const start = new Date()
+  const monthOpp = React.useMemo(() => buildMonthSeries(start, opps), [start, opps])
+  const quarterOpp = React.useMemo(() => buildQuarterSeries(start, opps), [start, opps])
+
+  const data = React.useMemo<Point[]>(() => {
+    if (mode === "month") {
+      const totalOpp = monthOpp.reduce((sum, row) => sum + row.oppEur, 0)
+      const cap = Math.max(0, kpis.inventoryEur)
+      const scale = totalOpp > cap && totalOpp > 0 ? cap / totalOpp : 1
+      return monthOpp.map((row, i) => {
+        const oppK = Math.round((row.oppEur * scale) / 1000)
+        const erpBase = ERP_MONTH_TEMPLATE[i % ERP_MONTH_TEMPLATE.length]
+        const hasOpp = row.oppEur > 0
+        const erp = hasOpp ? Math.max(erpBase, Math.round(oppK * 1.25)) : erpBase
+        return {
+          label: row.label,
+          opp: hasOpp ? oppK : erpBase,
+          erp,
+        }
+      })
+    }
+    const totalOpp = quarterOpp.reduce((sum, row) => sum + row.oppEur, 0)
+    const cap = Math.max(0, kpis.inventoryEur)
+    const scale = totalOpp > cap && totalOpp > 0 ? cap / totalOpp : 1
+    return quarterOpp.map((row, i) => {
+      const oppK = Math.round((row.oppEur * scale) / 1000)
+      const erpBase = ERP_QUARTER_TEMPLATE[i % ERP_QUARTER_TEMPLATE.length]
+      const hasOpp = row.oppEur > 0
+      const erp = hasOpp ? Math.max(erpBase, Math.round(oppK * 1.25)) : erpBase
+      return {
+        label: row.label,
+        opp: hasOpp ? oppK : erpBase,
+        erp,
+      }
+    })
+  }, [mode, monthOpp, quarterOpp])
 
   return (
     <WidgetCard

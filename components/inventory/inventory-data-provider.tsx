@@ -383,6 +383,26 @@ export function useInventoryData() {
   return ctx
 }
 
+export function applyOpportunityFilters(opps: Opportunity[], filters: OpportunityFilters) {
+  let res = opps
+  if (filters.partKeys.length > 0) {
+    res = res.filter((o) => filters.partKeys.includes(buildPartKey(o)))
+  }
+  if (filters.suggestedActions.length > 0) {
+    res = res.filter((o) => filters.suggestedActions.includes(o.suggestedAction))
+  }
+  if (filters.customers.length > 0) {
+    res = res.filter((o) => filters.customers.includes(o.customer))
+  }
+  if (filters.escLevels.length > 0) {
+    res = res.filter((o) => filters.escLevels.includes(o.escLevel))
+  }
+  if (filters.statuses.length > 0) {
+    res = res.filter((o) => filters.statuses.includes(o.status))
+  }
+  return res
+}
+
 export function useFilteredOpportunities(options?: { includeSnoozed?: boolean }) {
   const { plan, dateRange, opportunities, timeframePreset, filters } = useInventoryData()
   const { includeSnoozed = true } = options ?? {}
@@ -402,25 +422,6 @@ export function useFilteredOpportunities(options?: { includeSnoozed?: boolean })
         return t >= from && t <= to
       })
 
-    const applyFilters = (rows: Opportunity[]) => {
-      let res = rows
-      if (filters.partKeys.length > 0) {
-        res = res.filter((o) => filters.partKeys.includes(buildPartKey(o)))
-      }
-      if (filters.suggestedActions.length > 0) {
-        res = res.filter((o) => filters.suggestedActions.includes(o.suggestedAction))
-      }
-      if (filters.customers.length > 0) {
-        res = res.filter((o) => filters.customers.includes(o.customer))
-      }
-      if (filters.escLevels.length > 0) {
-        res = res.filter((o) => filters.escLevels.includes(o.escLevel))
-      }
-      if (filters.statuses.length > 0) {
-        res = res.filter((o) => filters.statuses.includes(o.status))
-      }
-      return res
-    }
 
     // 1) normal filtering
     let res = matches(baseFrom, baseTo)
@@ -437,7 +438,7 @@ export function useFilteredOpportunities(options?: { includeSnoozed?: boolean })
       }
     }
 
-    return applyFilters(res)
+    return applyOpportunityFilters(res, filters)
   }, [
     plan,
     dateRange.from,
