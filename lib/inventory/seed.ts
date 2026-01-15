@@ -1,0 +1,123 @@
+import type { Opportunity, Plan, OpportunityStatus, SuggestedAction } from "./types"
+
+// Small deterministic pseudo-random helper (stable across refreshes)
+function mulberry32(seed: number) {
+  return function () {
+    let t = (seed += 0x6d2b79f5)
+    t = Math.imul(t ^ (t >>> 15), t | 1)
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61)
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+  }
+}
+
+function pad2(n: number) {
+  return String(n).padStart(2, "0")
+}
+
+function toISODate(d: Date) {
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`
+}
+
+const PARTS = [
+  { name: "Valve Assembly", number: "VA-77821" },
+  { name: "Bearing Kit", number: "BK-22109" },
+  { name: "Sensor Module", number: "SM-45010" },
+  { name: "Gear Housing", number: "GH-90211" },
+  { name: "Hydraulic Pump", number: "HP-33018" },
+  { name: "Nozzle Plate", number: "NP-11409" },
+  { name: "Actuator Rod", number: "AR-77102" },
+  { name: "Seal Pack", number: "SP-55219" },
+]
+
+const SUPPLIERS = ["LunaCraft", "Celestial Dynamics", "AeroForge", "NovaComponents", "Orion Industrial"]
+const ASSIGNEES = ["A. Martin", "S. Dubois", "C. Leroy", "M. Rossi", "–"]
+const PLANTS = ["1123", "3535", "2041", "8810"]
+
+function pick<T>(r: () => number, arr: T[]): T {
+  return arr[Math.floor(r() * arr.length)]
+}
+
+function weightedStatus(r: () => number): OpportunityStatus {
+  const x = r()
+  if (x < 0.4) return "To Do"
+  if (x < 0.7) return "In Progress"
+  if (x < 0.92) return "Done"
+  return "Snoozed"
+}
+
+function weightedAction(r: () => number): SuggestedAction {
+  const x = r()
+  if (x < 0.55) return "Push Out"
+  if (x < 0.8) return "Cancel"
+  return "Pull in"
+}
+
+/**
+ * Generates "realistic enough" opportunities:
+ * - Different distributions per plan
+ * - Dates spread over the year
+ * - Numeric cash impact to power KPIs/widgets later
+ */
+export function seedOpportunities(plan: Plan, count = 220): Opportunity[] {
+  const baseSeed = plan === "ERP" ? 12345 : 67890
+  const r = mulberry32(baseSeed)
+
+  const today = new Date()
+    // Spread forward from today so short presets (Today/Tomorrow/EOM) always have data
+    const start = new Date(today)
+    const horizonDays = 365
+
+  const out: Opportunity[] = []
+
+  for (let i = 0; i < count; i++) {
+    const part = pick(r, PARTS)
+    const supplier = pick(r, SUPPLIERS)
+    const plant = pick(r, PLANTS)
+    const status = weightedStatus(r)
+
+    // ALT plan skew: more Pull-in actions
+    const action = plan === "ALT" ? (r() < 0.45 ? "Pull in" : weightedAction(r)) : weightedAction(r)
+
+    const supplyType = r() < 0.78 ? "PO" : "PR"
+    // 70% near-term (0-90 days), 30% anywhere in the next year
+    const nearTerm = r() < 0.7
+    const dayOffset = nearTerm ? Math.floor(r() * 90) : Math.floor(r() * horizonDays)
+    const date = new Date(start.getTime() + dayOffset * 86400000)
+
+      // Bigger demo values (so totals look like 5–30M€ depending on timeframe)
+      const base = plan === "ERP" ? 650_000 : 520_000
+      const variability = 0.8 + r() * 3.2 // 0.8x .. 4.0x
+      let cashImpactEur = Math.round(base * variability)
+
+      // 10% large spikes to make longer horizons visibly bigger
+      if (r() < 0.10) cashImpactEur += Math.round(2_000_000 + r() * 8_000_000) // +2M..+10M
+
+      // keep a floor so nothing is tiny
+      cashImpactEur = Math.max(60_000, cashImpactEur)
+
+
+    // Rare spikes (8%) to create visible impact differences across longer ranges
+    if (r() < 0.08) cashImpactEur += Math.round(300_000 + r() * 900_000) // +300k..+1.2M
+
+    // Optional: clamp to avoid absurd values
+    cashImpactEur = Math.max(5_000, cashImpactEur)
+
+    out.push({
+      id: `${plan.toLowerCase()}_opp_${i + 1}`,
+      plan,
+      orderNumber: `PO-${10000 + i}`,
+      partName: part.name,
+      partNumber: part.number,
+      suggestedAction: action,
+      suggestedDate: toISODate(date),
+      status,
+      assignee: pick(r, ASSIGNEES),
+      supplier,
+      plant,
+      supplyType,
+      cashImpactEur,
+    })
+  }
+
+  return out
+}

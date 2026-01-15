@@ -109,6 +109,12 @@ export function KpiCard({
   size = "s",
   className,
 }: KpiCardProps) {
+  const [mounted, setMounted] = React.useState(false)
+
+  React.useEffect(() => {
+    setMounted(true)
+  }, [])
+
   return (
     <WidgetCard
       title={title}
@@ -119,7 +125,7 @@ export function KpiCard({
     >
       <div className="text-4xl font-medium tracking-tight">{value}</div>
 
-      {description ? (
+      {mounted && description ? (
         <div className="mt-1 text-sm text-muted-foreground">{description}</div>
       ) : null}
     </WidgetCard>

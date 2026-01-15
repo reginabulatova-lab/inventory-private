@@ -10,14 +10,17 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-
-import { Plus } from "lucide-react"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { Button } from "@/components/ui/button"
-import { format } from "date-fns"
-import { Calendar as CalendarIcon } from "lucide-react"
-import { Calendar } from "@/components/ui/calendar"
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-
+import { useInventoryData } from "@/components/inventory/inventory-data-provider"
+import type { PresetKey } from "@/components/inventory/inventory-data-provider"
+import { rangeFromPreset } from "@/components/inventory/inventory-data-provider"
 
 import { cn } from "@/lib/utils"
 
@@ -59,10 +62,8 @@ export function InventorySubnav() {
     const currentLabel = React.useMemo(() => labelFromPath(pathname), [pathname])
     const [isSticky, setIsSticky] = React.useState(false)
     const sentinelRef = React.useRef<HTMLDivElement | null>(null)
-    const [dateRange, setDateRange] = React.useState<{ from?: Date; to?: Date }>({
-      from: new Date(new Date().getFullYear(), 0, 1),
-      to: new Date(),
-    })    
+    const { timeframePreset, setTimeframePreset, setDateRange } = useInventoryData()
+
     const [mounted, setMounted] = React.useState(false)
     React.useEffect(() => {
         setMounted(true)
@@ -136,45 +137,35 @@ export function InventorySubnav() {
                   </Button>
 
                   <div className="h-4 w-px bg-[#E5E7EB]" />
+                  <Select
+                    value={timeframePreset}
+                    onValueChange={(v) => {
+                      const key = v as PresetKey
+                      setTimeframePreset(key)
+                      setDateRange(rangeFromPreset(key))
+                    }}
+                  >
+                    <SelectTrigger className="h-11 w-[260px] bg-white px-3">
+                      <div className="flex flex-col items-start leading-tight">
+                        <span className="text-xs text-muted-foreground">Timeframe</span>
+                        <SelectValue />
+                      </div>
+                    </SelectTrigger>
 
-                  <Popover>
-                    <PopoverTrigger asChild>
-                      <Button
-                        variant="outline"
-                        className="h-11 w-[260px] justify-start bg-white px-3 text-left"
-                      >
-                        <CalendarIcon className="mr-2 h-4 w-4 text-muted-foreground" />
+                    <SelectContent align="start">
+                      <SelectItem value="current">Current</SelectItem>
 
-                        <div className="flex flex-col leading-tight">
-                          <span className="text-xs text-muted-foreground">Timeframe</span>
+                      <div className="px-2 py-2 text-xs font-medium text-muted-foreground">
+                        Projected
+                      </div>
 
-                          {dateRange?.from ? (
-                            dateRange.to ? (
-                              <span className="truncate text-sm font-medium text-foreground">
-                                {format(dateRange.from, "MMM d, yyyy")} – {format(dateRange.to, "MMM d, yyyy")}
-                              </span>
-                            ) : (
-                              <span className="truncate text-sm font-medium text-foreground">
-                                {format(dateRange.from, "MMM d, yyyy")}
-                              </span>
-                            )
-                          ) : (
-                            <span className="text-sm font-medium text-muted-foreground">Pick a date range</span>
-                          )}
-                        </div>
-                      </Button>
-                    </PopoverTrigger>
-
-                    <PopoverContent className="w-auto p-0" align="end">
-                      <Calendar
-                        mode="range"
-                        numberOfMonths={2}
-                        selected={dateRange as any}
-                        onSelect={(range) => setDateRange(range as any)}
-                        initialFocus
-                      />
-                    </PopoverContent>
-                  </Popover>
+                      <SelectItem value="today">Today</SelectItem>
+                      <SelectItem value="tomorrow">Tomorrow</SelectItem>
+                      <SelectItem value="eom">End of Month</SelectItem>
+                      <SelectItem value="eoq">End of Quarter</SelectItem>
+                      <SelectItem value="eoy">End of Year</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
               </div>
             </div>

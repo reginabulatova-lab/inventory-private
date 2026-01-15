@@ -19,6 +19,19 @@ export type PieDatum = {
   color: string
 }
 
+function formatEurCompact(value: number) {
+  const abs = Math.abs(value)
+
+  if (abs >= 1_000_000) return `€${(value / 1_000_000).toFixed(1)}M`
+  if (abs >= 1_000) return `€${(value / 1_000).toFixed(0)}K`
+  return `€${Math.round(value)}`
+}
+
+function formatPct(p: number) {
+  return `${Math.round(p)}%`
+}
+
+
 type PieBreakdownProps = {
   totalLabel: string
   totalValue: string

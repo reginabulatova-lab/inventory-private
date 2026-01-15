@@ -2,6 +2,7 @@
 
 import * as React from "react"
 import { format } from "date-fns"
+import { useFilteredOpportunities, useInventoryData } from "@/components/inventory/inventory-data-provider"
 
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -71,7 +72,8 @@ const seed: Opportunity[] = [
 ]
 
 export function OpportunitiesTable() {
-  const [rows, setRows] = React.useState<Opportunity[]>(seed)
+  const rows = useFilteredOpportunities({ includeSnoozed: true })
+  const { snoozeByIds } = useInventoryData()  
   const [selected, setSelected] = React.useState<Record<string, boolean>>({})
   const [openSnooze, setOpenSnooze] = React.useState(false)
 
@@ -90,16 +92,10 @@ export function OpportunitiesTable() {
   }
 
   const snoozeSelected = () => {
-    setRows((prev) =>
-      prev.map((r) =>
-        selectedIds.includes(r.id)
-          ? { ...r, status: "Snoozed", assignee: "–" }
-          : r
-      )
-    )
+    snoozeByIds(selectedIds)
     setSelected({})
     setOpenSnooze(false)
-  }
+  }  
 
   const allChecked = rows.length > 0 && selectedCount === rows.length
   const indeterminate = selectedCount > 0 && selectedCount < rows.length

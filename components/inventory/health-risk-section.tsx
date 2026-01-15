@@ -1,7 +1,28 @@
+"use client"
+
 import { KpiCard } from "@/components/inventory/kpi-card"
 import { Box, TrendingUp, TrendingDown } from "lucide-react"
+import { useFilteredOpportunities, useInventoryData } from "@/components/inventory/inventory-data-provider"
+import { computeHealthRiskKPIs } from "@/lib/inventory/selectors"
+import { computeInventoryBreakdown } from "@/lib/inventory/breakdown"
+
 
 export function HealthRiskSection() {
+  const { dateRange } = useInventoryData()
+
+  // All opportunities for current plan + timeframe
+  // Snoozed should NOT appear in Control Tower
+  const opportunities = useFilteredOpportunities({ includeSnoozed: false })
+
+  const breakdown = computeInventoryBreakdown(opportunities, dateRange.from, dateRange.to)
+  const inventoryEur = breakdown.kpiTotalEur
+
+  // Compute realistic KPI values from opportunities + timeframe
+  const kpis = computeHealthRiskKPIs(
+    opportunities,
+    dateRange.from,
+    dateRange.to
+  )
   return (
     <section className="mt-8">
       <h2 className="text-2xl font-semibold tracking-tight">
@@ -11,28 +32,21 @@ export function HealthRiskSection() {
       <div className="mt-5 grid grid-cols-12 gap-6">
         <KpiCard
           title="Inventory"
-          value="2,3 M€"
-          icon={<Box className="h-4 w-4" />}
-          size="s"
+          value={`${(kpis.inventoryEur / 1_000_000).toFixed(1)} M€`}
         />
 
         <KpiCard
           title="Overstock"
-          value="1,2 M€"
-          description="25K parts"
-          tooltip="Value of stock above target levels."
-          icon={<TrendingUp className="h-4 w-4" />}
-          size="s"
+          value={`${(kpis.overstockEur / 1_000_000).toFixed(1)} M€`}
+          description={`${kpis.overstockParts} parts`}
         />
 
         <KpiCard
           title="Understock"
-          value="0,3 M€"
-          description="5K parts"
-          tooltip="Value of shortages vs. target levels."
-          icon={<TrendingDown className="h-4 w-4" />}
-          size="s"
+          value={`${(kpis.understockEur / 1_000_000).toFixed(1)} M€`}
+          description={`${kpis.understockParts} parts`}
         />
+
       </div>
     </section>
   )
