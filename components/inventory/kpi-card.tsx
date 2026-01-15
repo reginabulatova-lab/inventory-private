@@ -89,7 +89,8 @@ export function WidgetCard({
 type KpiCardProps = {
   title: string
   value: string
-  description?: string
+  description?: React.ReactNode
+  badge?: React.ReactNode
   tooltip?: string
   icon?: React.ReactNode
   size?: WidgetSize
@@ -104,6 +105,7 @@ export function KpiCard({
   title,
   value,
   description,
+  badge,
   tooltip,
   icon,
   size = "s",
@@ -123,7 +125,10 @@ export function KpiCard({
       size={size}
       className={className}
     >
-      <div className="text-4xl font-medium tracking-tight">{value}</div>
+      <div className="flex items-center gap-3">
+        <div className="text-4xl font-medium tracking-tight">{value}</div>
+        {badge ? <div className="shrink-0">{badge}</div> : null}
+      </div>
 
       {mounted && description ? (
         <div className="mt-1 text-sm text-muted-foreground">{description}</div>

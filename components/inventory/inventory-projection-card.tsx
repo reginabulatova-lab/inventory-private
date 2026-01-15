@@ -13,6 +13,9 @@ import {
 } from "recharts"
 import { WidgetCard } from "@/components/inventory/kpi-card"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
+import { Button } from "@/components/ui/button"
+import { MoreHorizontal } from "lucide-react"
 import {
   applyOpportunityFilters,
   useInventoryData,
@@ -25,6 +28,7 @@ type Point = {
   label: string
   erp: number // in K€
   opp: number // in K€
+  target: number // in K€
 }
 
 const ERP_MONTH_TEMPLATE = [
@@ -49,6 +53,8 @@ const ERP_QUARTER_TEMPLATE = [
   { label: "Q4 2025", erp: 613, opp: 125 },
 ].map((d) => d.erp)
 
+const TARGET_QUARTER_EUR = 2_400_000
+
 function formatKeur(v: number) {
   if (v >= 1000) return `${(v / 1000).toFixed(1)} M€`
   return `${Math.round(v)} K€`
@@ -63,6 +69,11 @@ function startOfQuarter(d: Date) {
   return new Date(d.getFullYear(), q, 1)
 }
 
+function endOfQuarter(d: Date) {
+  const q = Math.floor(d.getMonth() / 3) * 3
+  return new Date(d.getFullYear(), q + 3, 0, 23, 59, 59, 999)
+}
+
 const MONTH_LABELS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 
 function formatMonthLabel(d: Date) {
@@ -74,6 +85,11 @@ function buildMonthSeries(start: Date, opps: { suggestedDate: string; cashImpact
   return Array.from({ length: 12 }, (_, i) => {
     const monthStart = new Date(startDate.getFullYear(), startDate.getMonth() + i, 1)
     const monthEnd = new Date(startDate.getFullYear(), startDate.getMonth() + i + 1, 0, 23, 59, 59, 999)
+    const quarterStart = startOfQuarter(monthStart)
+    const quarterEnd = endOfQuarter(monthStart)
+    const quarterDays =
+      Math.round((quarterEnd.getTime() - quarterStart.getTime()) / 86400000) + 1
+    const monthDays = Math.round((monthEnd.getTime() - monthStart.getTime()) / 86400000) + 1
     const totalEur = opps.reduce((sum, o) => {
       const t = new Date(o.suggestedDate).getTime()
       if (!Number.isFinite(t)) return sum
@@ -83,6 +99,7 @@ function buildMonthSeries(start: Date, opps: { suggestedDate: string; cashImpact
     return {
       label: formatMonthLabel(monthStart),
       oppEur: totalEur,
+      targetK: Math.round((TARGET_QUARTER_EUR * (monthDays / quarterDays)) / 1000),
     }
   })
 }
@@ -102,6 +119,7 @@ function buildQuarterSeries(start: Date, opps: { suggestedDate: string; cashImpa
     return {
       label: `Q${q} ${quarterStart.getFullYear()}`,
       oppEur: totalEur,
+      targetK: Math.round(TARGET_QUARTER_EUR / 1000),
     }
   })
 }
@@ -130,6 +148,7 @@ function InventoryProjectionTooltip({
 
   const erp = byKey.get("erp")
   const opp = byKey.get("opp")
+  const target = byKey.get("target")
 
   return (
     <div className="rounded-xl border bg-white p-4 shadow-lg">
@@ -173,6 +192,25 @@ function InventoryProjectionTooltip({
             {opp != null ? tooltipValueFormatter(opp) : "—"}
           </span>
         </div>
+
+        <div className="flex items-center justify-between gap-6">
+          <div className="flex items-center gap-2">
+            <span
+              className="inline-block w-7"
+              style={{
+                height: 0,
+                borderTop: "3px solid #9CA3AF",
+                borderRadius: 999,
+              }}
+            />
+            <span className="text-sm font-medium text-foreground">
+              Target
+            </span>
+          </div>
+          <span className="text-sm font-semibold text-foreground">
+            {target != null ? tooltipValueFormatter(target) : "—"}
+          </span>
+        </div>
       </div>
     </div>
   )
@@ -180,6 +218,7 @@ function InventoryProjectionTooltip({
 
 export function InventoryProjectionCard() {
   const [mode, setMode] = React.useState<ViewMode>("month")
+  const [showTarget, setShowTarget] = React.useState(true)
   const { opportunities, plan, filters } = useInventoryData()
 
   const opps = React.useMemo(() => {
@@ -215,6 +254,7 @@ export function InventoryProjectionCard() {
           label: row.label,
           opp: hasOpp ? oppK : erpBase,
           erp,
+          target: row.targetK,
         }
       })
     }
@@ -230,6 +270,7 @@ export function InventoryProjectionCard() {
         label: row.label,
         opp: hasOpp ? oppK : erpBase,
         erp,
+        target: row.targetK,
       }
     })
   }, [mode, monthOpp, quarterOpp])
@@ -240,16 +281,30 @@ export function InventoryProjectionCard() {
       tooltip="Comparison between ERP plan and projected inventory if all not-snoozed opportunities are applied."
       size="l"
       headerRight={
-        <Tabs value={mode} onValueChange={(v) => setMode(v as ViewMode)}>
-          <TabsList className="h-8">
-            <TabsTrigger value="quarter" className="px-3 text-xs">
-              Quarter
-            </TabsTrigger>
-            <TabsTrigger value="month" className="px-3 text-xs">
-              Month
-            </TabsTrigger>
-          </TabsList>
-        </Tabs>
+        <div className="flex items-center gap-2">
+          <Tabs value={mode} onValueChange={(v) => setMode(v as ViewMode)}>
+            <TabsList className="h-8">
+              <TabsTrigger value="quarter" className="px-3 text-xs">
+                Quarter
+              </TabsTrigger>
+              <TabsTrigger value="month" className="px-3 text-xs">
+                Month
+              </TabsTrigger>
+            </TabsList>
+          </Tabs>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="icon" className="h-8 w-8">
+                <MoreHorizontal className="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={() => setShowTarget((prev) => !prev)}>
+                {showTarget ? "Hide the target" : "Show the target"}
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
       }
     >
       <div className="h-[280px] w-full">
@@ -289,7 +344,13 @@ export function InventoryProjectionCard() {
               iconType="plainline"
               formatter={(value) => {
                 const label =
-                  value === "erp" ? "ERP plan" : value === "opp" ? "With Opportunities" : String(value)
+                  value === "erp"
+                    ? "ERP plan"
+                    : value === "opp"
+                      ? "With Opportunities"
+                      : value === "target"
+                        ? "Target"
+                        : String(value)
 
                 return <span className="text-sm text-muted-foreground">{label}</span>
               }}
@@ -313,6 +374,17 @@ export function InventoryProjectionCard() {
               dot={{ r: 4, stroke: "#ffffff", strokeWidth: 2, fill: "#19A7B0" }}
               activeDot={{ r: 5, stroke: "#ffffff", strokeWidth: 4, fill: "#19A7B0" }}
             />
+
+            {showTarget ? (
+              <Line
+                type="monotone"
+                dataKey="target"
+                stroke="#F59E0B"
+                strokeWidth={2}
+                dot={false}
+                activeDot={false}
+              />
+            ) : null}
           </LineChart>
         </ResponsiveContainer>
       </div>
