@@ -25,6 +25,8 @@ export type Opportunity = {
   customer: string
   escLevel: 1 | 2 | 3 | 4
   plant: string
+  buyerCode: string
+  mrpCode: string
   supplyType: "PO" | "PR"
   cashImpactEur: number // numeric so widgets can aggregate
 

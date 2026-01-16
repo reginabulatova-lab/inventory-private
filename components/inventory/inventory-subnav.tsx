@@ -2,8 +2,8 @@
 
 import * as React from "react"
 import { usePathname, useRouter } from "next/navigation"
-import { ChevronDown } from "lucide-react"
-import { Filter, X } from "lucide-react"
+import { ChevronDown, X } from "lucide-react"
+import { Filter } from "lucide-react"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -73,6 +73,8 @@ export function InventorySubnav() {
       useInventoryData()
     const filterOptions = useOpportunitiesForFilters()
     const [partSearch, setPartSearch] = React.useState("")
+    const [openScopeDropdown, setOpenScopeDropdown] = React.useState<"plant" | "buyerCode" | "mrpCode" | null>(null)
+  const scopeDefaultsApplied = React.useRef(false)
 
     const toggleValue = React.useCallback(<T,>(list: T[], value: T) => {
       if (list.includes(value)) {
@@ -99,7 +101,48 @@ export function InventorySubnav() {
         if (sentinelRef.current) observer.observe(sentinelRef.current)
       
         return () => observer.disconnect()
-      }, [])      
+      }, [])
+
+    const scopeOptions = React.useMemo(() => {
+      const plants = Array.from(new Set(filterOptions.map((o) => o.plant))).filter(Boolean).sort()
+      const buyerCodes = Array.from(new Set(filterOptions.map((o) => o.buyerCode))).filter(Boolean).sort()
+      const mrpCodes = Array.from(new Set(filterOptions.map((o) => o.mrpCode))).filter(Boolean).sort()
+      return { plants, buyerCodes, mrpCodes }
+    }, [filterOptions])
+
+    React.useEffect(() => {
+      if (scopeDefaultsApplied.current) return
+      if (
+        scopeOptions.plants.length === 0 ||
+        scopeOptions.buyerCodes.length === 0 ||
+        scopeOptions.mrpCodes.length === 0
+      ) {
+        return
+      }
+
+      setFilters((prev) => ({
+        ...prev,
+        plants: prev.plants.length > 0 ? prev.plants : scopeOptions.plants,
+        buyerCodes: prev.buyerCodes.length > 0 ? prev.buyerCodes : scopeOptions.buyerCodes,
+        mrpCodes: prev.mrpCodes.length > 0 ? prev.mrpCodes : scopeOptions.mrpCodes,
+      }))
+      scopeDefaultsApplied.current = true
+    }, [scopeOptions, setFilters])
+
+    // Close scope dropdowns when clicking outside
+    React.useEffect(() => {
+      if (openScopeDropdown === null) return
+      
+      const handleClickOutside = (e: MouseEvent) => {
+        const target = e.target as HTMLElement
+        if (!target.closest('[data-scope-dropdown]')) {
+          setOpenScopeDropdown(null)
+        }
+      }
+      
+      document.addEventListener("mousedown", handleClickOutside)
+      return () => document.removeEventListener("mousedown", handleClickOutside)
+    }, [openScopeDropdown])      
 
       return (
         <>
@@ -159,6 +202,9 @@ export function InventorySubnav() {
                         filters.customers.length > 0,
                         filters.escLevels.length > 0,
                         filters.statuses.length > 0,
+                        filters.plants.length > 0,
+                        filters.buyerCodes.length > 0,
+                        filters.mrpCodes.length > 0,
                       ].filter(Boolean).length > 0 ? (
                         <span className="absolute -right-1 -top-1 flex h-5 min-w-[20px] items-center justify-center rounded-full bg-foreground px-1 text-[10px] font-semibold text-background">
                           {
@@ -168,6 +214,9 @@ export function InventorySubnav() {
                               filters.customers.length > 0,
                               filters.escLevels.length > 0,
                               filters.statuses.length > 0,
+                              filters.plants.length > 0,
+                              filters.buyerCodes.length > 0,
+                              filters.mrpCodes.length > 0,
                             ].filter(Boolean).length
                           }
                         </span>
@@ -191,6 +240,367 @@ export function InventorySubnav() {
                     </div>
 
                     <div className="mt-4 space-y-4">
+                      {/* Scope */}
+                      <div className="space-y-3 rounded-lg bg-[#E6F7F8] border border-[#BFEFF2] p-3">
+                        <div className="flex items-center gap-1.5 text-xs font-semibold text-foreground">
+                          <span>✨</span>
+                          <span>Scope</span>
+                        </div>
+                        
+                        <div className="flex flex-wrap gap-2">
+                          {/* Plant chip */}
+                          {(() => {
+                            const allPlants = Array.from(new Set(filterOptions.map((o) => o.plant)))
+                              .filter(Boolean)
+                              .sort()
+                            const selectedPlants = filters.plants.filter((p) => allPlants.includes(p)).sort()
+                            const isOpen = openScopeDropdown === "plant"
+                            
+                            return (
+                              <div className="relative" data-scope-dropdown>
+                                <div
+                                  role="button"
+                                  tabIndex={0}
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    setOpenScopeDropdown(isOpen ? null : "plant")
+                                  }}
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter" || e.key === " ") {
+                                      e.preventDefault()
+                                      setOpenScopeDropdown(isOpen ? null : "plant")
+                                    }
+                                  }}
+                                  className="flex items-center gap-1.5 rounded-full bg-white border border-[#D9DDE7] px-3 py-2 text-xs cursor-pointer hover:bg-white/80 transition-colors"
+                                >
+                                  <span className="font-medium text-muted-foreground">Plant:</span>
+                                  <span className="text-foreground">
+                                    {selectedPlants.length > 0 ? selectedPlants.join(", ") : "—"}
+                                  </span>
+                                  {selectedPlants.length > 0 && (
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation()
+                                        setFilters((prev) => ({ ...prev, plants: [] }))
+                                      }}
+                                      className="ml-1.5 hover:bg-accent rounded-full p-0.5 transition-colors"
+                                    >
+                                      <X className="h-3 w-3 text-muted-foreground" />
+                                    </button>
+                                  )}
+                                </div>
+                                
+                                {isOpen && (
+                                  <div className="absolute top-full left-0 mt-1 z-50 w-64 rounded-md border bg-white shadow-lg">
+                                    <div className="max-h-60 overflow-y-auto p-2">
+                                      {(() => {
+                                        const allSelected = allPlants.length > 0 && allPlants.every((plant) => filters.plants.includes(plant))
+                                        const someSelected = filters.plants.length > 0 && !allSelected
+                                        
+                                        return (
+                                          <div
+                                            role="button"
+                                            tabIndex={0}
+                                            onClick={(e) => {
+                                              e.stopPropagation()
+                                              if (allSelected) {
+                                                setFilters((prev) => ({ ...prev, plants: [] }))
+                                              } else {
+                                                setFilters((prev) => ({ ...prev, plants: allPlants }))
+                                              }
+                                            }}
+                                            onKeyDown={(e) => {
+                                              if (e.key === "Enter" || e.key === " ") {
+                                                e.preventDefault()
+                                                if (allSelected) {
+                                                  setFilters((prev) => ({ ...prev, plants: [] }))
+                                                } else {
+                                                  setFilters((prev) => ({ ...prev, plants: allPlants }))
+                                                }
+                                              }
+                                            }}
+                                            className={cn(
+                                              "flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-accent rounded",
+                                              filters.plants.length === 0 && "bg-accent"
+                                            )}
+                                          >
+                                            <Checkbox 
+                                              checked={allSelected}
+                                              className={someSelected ? "data-[state=checked]:bg-primary/50" : ""}
+                                            />
+                                            <span>All plants</span>
+                                          </div>
+                                        )
+                                      })()}
+                                      {allPlants.map((plant) => (
+                                        <div
+                                          key={plant}
+                                          role="button"
+                                          tabIndex={0}
+                                          onClick={() =>
+                                            setFilters((prev) => ({
+                                              ...prev,
+                                              plants: toggleValue(prev.plants, plant),
+                                            }))
+                                          }
+                                          onKeyDown={(e) => {
+                                            if (e.key === "Enter" || e.key === " ") {
+                                              e.preventDefault()
+                                              setFilters((prev) => ({
+                                                ...prev,
+                                                plants: toggleValue(prev.plants, plant),
+                                              }))
+                                            }
+                                          }}
+                                          className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-accent rounded"
+                                        >
+                                          <Checkbox checked={filters.plants.includes(plant)} />
+                                          <span>{plant}</span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            )
+                          })()}
+
+                          {/* Buyer code chip */}
+                          {(() => {
+                            const allBuyerCodes = Array.from(new Set(filterOptions.map((o) => o.buyerCode)))
+                              .filter(Boolean)
+                              .sort()
+                            const selectedBuyerCodes = filters.buyerCodes.filter((c) => allBuyerCodes.includes(c)).sort()
+                            const isOpen = openScopeDropdown === "buyerCode"
+                            
+                            return (
+                              <div className="relative" data-scope-dropdown>
+                                <div
+                                  role="button"
+                                  tabIndex={0}
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    setOpenScopeDropdown(isOpen ? null : "buyerCode")
+                                  }}
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter" || e.key === " ") {
+                                      e.preventDefault()
+                                      setOpenScopeDropdown(isOpen ? null : "buyerCode")
+                                    }
+                                  }}
+                                  className="flex items-center gap-1.5 rounded-full bg-white border border-[#D9DDE7] px-3 py-2 text-xs cursor-pointer hover:bg-white/80 transition-colors"
+                                >
+                                  <span className="font-medium text-muted-foreground">Buyer code:</span>
+                                  <span className="text-foreground">
+                                    {selectedBuyerCodes.length > 0 ? selectedBuyerCodes.join(", ") : "—"}
+                                  </span>
+                                  {selectedBuyerCodes.length > 0 && (
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation()
+                                        setFilters((prev) => ({ ...prev, buyerCodes: [] }))
+                                      }}
+                                      className="ml-1.5 hover:bg-accent rounded-full p-0.5 transition-colors"
+                                    >
+                                      <X className="h-3 w-3 text-muted-foreground" />
+                                    </button>
+                                  )}
+                                </div>
+                                
+                                {isOpen && (
+                                  <div className="absolute top-full left-0 mt-1 z-50 w-64 rounded-md border bg-white shadow-lg">
+                                    <div className="max-h-60 overflow-y-auto p-2">
+                                      {(() => {
+                                        const allSelected = allBuyerCodes.length > 0 && allBuyerCodes.every((code) => filters.buyerCodes.includes(code))
+                                        const someSelected = filters.buyerCodes.length > 0 && !allSelected
+                                        
+                                        return (
+                                          <div
+                                            role="button"
+                                            tabIndex={0}
+                                            onClick={(e) => {
+                                              e.stopPropagation()
+                                              if (allSelected) {
+                                                setFilters((prev) => ({ ...prev, buyerCodes: [] }))
+                                              } else {
+                                                setFilters((prev) => ({ ...prev, buyerCodes: allBuyerCodes }))
+                                              }
+                                            }}
+                                            onKeyDown={(e) => {
+                                              if (e.key === "Enter" || e.key === " ") {
+                                                e.preventDefault()
+                                                if (allSelected) {
+                                                  setFilters((prev) => ({ ...prev, buyerCodes: [] }))
+                                                } else {
+                                                  setFilters((prev) => ({ ...prev, buyerCodes: allBuyerCodes }))
+                                                }
+                                              }
+                                            }}
+                                            className={cn(
+                                              "flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-accent rounded",
+                                              filters.buyerCodes.length === 0 && "bg-accent"
+                                            )}
+                                          >
+                                            <Checkbox 
+                                              checked={allSelected}
+                                              className={someSelected ? "data-[state=checked]:bg-primary/50" : ""}
+                                            />
+                                            <span>All buyer codes</span>
+                                          </div>
+                                        )
+                                      })()}
+                                      {allBuyerCodes.map((code) => (
+                                        <div
+                                          key={code}
+                                          role="button"
+                                          tabIndex={0}
+                                          onClick={() =>
+                                            setFilters((prev) => ({
+                                              ...prev,
+                                              buyerCodes: toggleValue(prev.buyerCodes, code),
+                                            }))
+                                          }
+                                          onKeyDown={(e) => {
+                                            if (e.key === "Enter" || e.key === " ") {
+                                              e.preventDefault()
+                                              setFilters((prev) => ({
+                                                ...prev,
+                                                buyerCodes: toggleValue(prev.buyerCodes, code),
+                                              }))
+                                            }
+                                          }}
+                                          className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-accent rounded"
+                                        >
+                                          <Checkbox checked={filters.buyerCodes.includes(code)} />
+                                          <span>{code}</span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            )
+                          })()}
+
+                          {/* MRP code chip */}
+                          {(() => {
+                            const allMrpCodes = Array.from(new Set(filterOptions.map((o) => o.mrpCode)))
+                              .filter(Boolean)
+                              .sort()
+                            const selectedMrpCodes = filters.mrpCodes.filter((c) => allMrpCodes.includes(c)).sort()
+                            const isOpen = openScopeDropdown === "mrpCode"
+                            
+                            return (
+                              <div className="relative" data-scope-dropdown>
+                                <div
+                                  role="button"
+                                  tabIndex={0}
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    setOpenScopeDropdown(isOpen ? null : "mrpCode")
+                                  }}
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter" || e.key === " ") {
+                                      e.preventDefault()
+                                      setOpenScopeDropdown(isOpen ? null : "mrpCode")
+                                    }
+                                  }}
+                                  className="flex items-center gap-1.5 rounded-full bg-white border border-[#D9DDE7] px-3 py-2 text-xs cursor-pointer hover:bg-white/80 transition-colors"
+                                >
+                                  <span className="font-medium text-muted-foreground">MRP code:</span>
+                                  <span className="text-foreground">
+                                    {selectedMrpCodes.length > 0 ? selectedMrpCodes.join(", ") : "—"}
+                                  </span>
+                                  {selectedMrpCodes.length > 0 && (
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation()
+                                        setFilters((prev) => ({ ...prev, mrpCodes: [] }))
+                                      }}
+                                      className="ml-1.5 hover:bg-accent rounded-full p-0.5 transition-colors"
+                                    >
+                                      <X className="h-3 w-3 text-muted-foreground" />
+                                    </button>
+                                  )}
+                                </div>
+                                
+                                {isOpen && (
+                                  <div className="absolute top-full left-0 mt-1 z-50 w-64 rounded-md border bg-white shadow-lg">
+                                    <div className="max-h-60 overflow-y-auto p-2">
+                                      {(() => {
+                                        const allSelected = allMrpCodes.length > 0 && allMrpCodes.every((code) => filters.mrpCodes.includes(code))
+                                        const someSelected = filters.mrpCodes.length > 0 && !allSelected
+                                        
+                                        return (
+                                          <div
+                                            role="button"
+                                            tabIndex={0}
+                                            onClick={(e) => {
+                                              e.stopPropagation()
+                                              if (allSelected) {
+                                                setFilters((prev) => ({ ...prev, mrpCodes: [] }))
+                                              } else {
+                                                setFilters((prev) => ({ ...prev, mrpCodes: allMrpCodes }))
+                                              }
+                                            }}
+                                            onKeyDown={(e) => {
+                                              if (e.key === "Enter" || e.key === " ") {
+                                                e.preventDefault()
+                                                if (allSelected) {
+                                                  setFilters((prev) => ({ ...prev, mrpCodes: [] }))
+                                                } else {
+                                                  setFilters((prev) => ({ ...prev, mrpCodes: allMrpCodes }))
+                                                }
+                                              }
+                                            }}
+                                            className={cn(
+                                              "flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-accent rounded",
+                                              filters.mrpCodes.length === 0 && "bg-accent"
+                                            )}
+                                          >
+                                            <Checkbox 
+                                              checked={allSelected}
+                                              className={someSelected ? "data-[state=checked]:bg-primary/50" : ""}
+                                            />
+                                            <span>All MRP codes</span>
+                                          </div>
+                                        )
+                                      })()}
+                                      {allMrpCodes.map((code) => (
+                                        <div
+                                          key={code}
+                                          role="button"
+                                          tabIndex={0}
+                                          onClick={() =>
+                                            setFilters((prev) => ({
+                                              ...prev,
+                                              mrpCodes: toggleValue(prev.mrpCodes, code),
+                                            }))
+                                          }
+                                          onKeyDown={(e) => {
+                                            if (e.key === "Enter" || e.key === " ") {
+                                              e.preventDefault()
+                                              setFilters((prev) => ({
+                                                ...prev,
+                                                mrpCodes: toggleValue(prev.mrpCodes, code),
+                                              }))
+                                            }
+                                          }}
+                                          className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-accent rounded"
+                                        >
+                                          <Checkbox checked={filters.mrpCodes.includes(code)} />
+                                          <span>{code}</span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            )
+                          })()}
+                        </div>
+                      </div>
+
                       {/* Part name/number */}
                       <div className="space-y-2">
                         <div className="text-xs font-medium text-muted-foreground">
@@ -203,26 +613,48 @@ export function InventorySubnav() {
                           className="h-9 w-full rounded-md border bg-white px-3 text-sm outline-none"
                         />
                         <div className="max-h-40 overflow-y-auto rounded-md border">
-                          <div
-                            role="button"
-                            tabIndex={0}
-                            onClick={() => setFilters((prev) => ({ ...prev, partKeys: [] }))}
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter" || e.key === " ") {
-                                e.preventDefault()
-                                setFilters((prev) => ({ ...prev, partKeys: [] }))
-                              }
-                            }}
-                            className={cn(
-                              "flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-accent",
-                              filters.partKeys.length === 0 && "bg-accent"
-                            )}
-                          >
-                            All parts
-                            {filters.partKeys.length === 0 ? (
-                              <X className="h-3.5 w-3.5 text-muted-foreground" />
-                            ) : null}
-                          </div>
+                          {(() => {
+                            const allPartKeys = filterOptions
+                              .map((o) => buildPartKey(o))
+                              .filter((key, idx, arr) => arr.findIndex((x) => x === key) === idx)
+                            const allSelected = allPartKeys.length > 0 && allPartKeys.every((key) => filters.partKeys.includes(key))
+                            const someSelected = filters.partKeys.length > 0 && !allSelected
+                            
+                            return (
+                              <div
+                                role="button"
+                                tabIndex={0}
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  if (allSelected) {
+                                    setFilters((prev) => ({ ...prev, partKeys: [] }))
+                                  } else {
+                                    setFilters((prev) => ({ ...prev, partKeys: allPartKeys }))
+                                  }
+                                }}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter" || e.key === " ") {
+                                    e.preventDefault()
+                                    if (allSelected) {
+                                      setFilters((prev) => ({ ...prev, partKeys: [] }))
+                                    } else {
+                                      setFilters((prev) => ({ ...prev, partKeys: allPartKeys }))
+                                    }
+                                  }
+                                }}
+                                className={cn(
+                                  "flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-accent",
+                                  filters.partKeys.length === 0 && "bg-accent"
+                                )}
+                              >
+                                <Checkbox 
+                                  checked={allSelected}
+                                  className={someSelected ? "data-[state=checked]:bg-primary/50" : ""}
+                                />
+                                <span>All parts</span>
+                              </div>
+                            )
+                          })()}
                           {filterOptions
                             .map((o) => ({
                               key: buildPartKey(o),
@@ -272,28 +704,48 @@ export function InventorySubnav() {
                           Suggested action
                         </div>
                         <div className="rounded-md border">
-                          <div
-                            role="button"
-                            tabIndex={0}
-                            onClick={() =>
-                              setFilters((prev) => ({ ...prev, suggestedActions: [] }))
-                            }
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter" || e.key === " ") {
-                                e.preventDefault()
-                                setFilters((prev) => ({ ...prev, suggestedActions: [] }))
-                              }
-                            }}
-                            className={cn(
-                              "flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-accent",
-                              filters.suggestedActions.length === 0 && "bg-accent"
-                            )}
-                          >
-                            All actions
-                            {filters.suggestedActions.length === 0 ? (
-                              <X className="h-3.5 w-3.5 text-muted-foreground" />
-                            ) : null}
-                          </div>
+                          {(() => {
+                            const allActions = Array.from(new Set(filterOptions.map((o) => o.suggestedAction)))
+                              .filter(Boolean)
+                              .sort() as Opportunity["suggestedAction"][]
+                            const allSelected = allActions.length > 0 && allActions.every((action) => filters.suggestedActions.includes(action))
+                            const someSelected = filters.suggestedActions.length > 0 && !allSelected
+                            
+                            return (
+                              <div
+                                role="button"
+                                tabIndex={0}
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  if (allSelected) {
+                                    setFilters((prev) => ({ ...prev, suggestedActions: [] }))
+                                  } else {
+                                    setFilters((prev) => ({ ...prev, suggestedActions: allActions }))
+                                  }
+                                }}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter" || e.key === " ") {
+                                    e.preventDefault()
+                                    if (allSelected) {
+                                      setFilters((prev) => ({ ...prev, suggestedActions: [] }))
+                                    } else {
+                                      setFilters((prev) => ({ ...prev, suggestedActions: allActions }))
+                                    }
+                                  }
+                                }}
+                                className={cn(
+                                  "flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-accent",
+                                  filters.suggestedActions.length === 0 && "bg-accent"
+                                )}
+                              >
+                                <Checkbox 
+                                  checked={allSelected}
+                                  className={someSelected ? "data-[state=checked]:bg-primary/50" : ""}
+                                />
+                                <span>All actions</span>
+                              </div>
+                            )
+                          })()}
                           {Array.from(new Set(filterOptions.map((o) => o.suggestedAction)))
                             .filter(Boolean)
                             .sort()
@@ -340,26 +792,48 @@ export function InventorySubnav() {
                       <div className="space-y-2">
                         <div className="text-xs font-medium text-muted-foreground">Customer</div>
                         <div className="rounded-md border">
-                          <div
-                            role="button"
-                            tabIndex={0}
-                            onClick={() => setFilters((prev) => ({ ...prev, customers: [] }))}
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter" || e.key === " ") {
-                                e.preventDefault()
-                                setFilters((prev) => ({ ...prev, customers: [] }))
-                              }
-                            }}
-                            className={cn(
-                              "flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-accent",
-                              filters.customers.length === 0 && "bg-accent"
-                            )}
-                          >
-                            All customers
-                            {filters.customers.length === 0 ? (
-                              <X className="h-3.5 w-3.5 text-muted-foreground" />
-                            ) : null}
-                          </div>
+                          {(() => {
+                            const allCustomers = Array.from(new Set(filterOptions.map((o) => o.customer)))
+                              .filter(Boolean)
+                              .sort()
+                            const allSelected = allCustomers.length > 0 && allCustomers.every((customer) => filters.customers.includes(customer))
+                            const someSelected = filters.customers.length > 0 && !allSelected
+                            
+                            return (
+                              <div
+                                role="button"
+                                tabIndex={0}
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  if (allSelected) {
+                                    setFilters((prev) => ({ ...prev, customers: [] }))
+                                  } else {
+                                    setFilters((prev) => ({ ...prev, customers: allCustomers }))
+                                  }
+                                }}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter" || e.key === " ") {
+                                    e.preventDefault()
+                                    if (allSelected) {
+                                      setFilters((prev) => ({ ...prev, customers: [] }))
+                                    } else {
+                                      setFilters((prev) => ({ ...prev, customers: allCustomers }))
+                                    }
+                                  }
+                                }}
+                                className={cn(
+                                  "flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-accent",
+                                  filters.customers.length === 0 && "bg-accent"
+                                )}
+                              >
+                                <Checkbox 
+                                  checked={allSelected}
+                                  className={someSelected ? "data-[state=checked]:bg-primary/50" : ""}
+                                />
+                                <span>All customers</span>
+                              </div>
+                            )
+                          })()}
                           {Array.from(new Set(filterOptions.map((o) => o.customer)))
                             .filter(Boolean)
                             .sort()
@@ -396,26 +870,46 @@ export function InventorySubnav() {
                       <div className="space-y-2">
                         <div className="text-xs font-medium text-muted-foreground">Esc. level</div>
                         <div className="rounded-md border">
-                          <div
-                            role="button"
-                            tabIndex={0}
-                            onClick={() => setFilters((prev) => ({ ...prev, escLevels: [] }))}
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter" || e.key === " ") {
-                                e.preventDefault()
-                                setFilters((prev) => ({ ...prev, escLevels: [] }))
-                              }
-                            }}
-                            className={cn(
-                              "flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-accent",
-                              filters.escLevels.length === 0 && "bg-accent"
-                            )}
-                          >
-                            All levels
-                            {filters.escLevels.length === 0 ? (
-                              <X className="h-3.5 w-3.5 text-muted-foreground" />
-                            ) : null}
-                          </div>
+                          {(() => {
+                            const allLevels: Opportunity["escLevel"][] = [1, 2, 3, 4]
+                            const allSelected = allLevels.every((level) => filters.escLevels.includes(level))
+                            const someSelected = filters.escLevels.length > 0 && !allSelected
+                            
+                            return (
+                              <div
+                                role="button"
+                                tabIndex={0}
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  if (allSelected) {
+                                    setFilters((prev) => ({ ...prev, escLevels: [] }))
+                                  } else {
+                                    setFilters((prev) => ({ ...prev, escLevels: allLevels }))
+                                  }
+                                }}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter" || e.key === " ") {
+                                    e.preventDefault()
+                                    if (allSelected) {
+                                      setFilters((prev) => ({ ...prev, escLevels: [] }))
+                                    } else {
+                                      setFilters((prev) => ({ ...prev, escLevels: allLevels }))
+                                    }
+                                  }
+                                }}
+                                className={cn(
+                                  "flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-accent",
+                                  filters.escLevels.length === 0 && "bg-accent"
+                                )}
+                              >
+                                <Checkbox 
+                                  checked={allSelected}
+                                  className={someSelected ? "data-[state=checked]:bg-primary/50" : ""}
+                                />
+                                <span>All levels</span>
+                              </div>
+                            )
+                          })()}
                           {[1, 2, 3, 4].map((level) => (
                             <div
                               key={level}
@@ -455,26 +949,46 @@ export function InventorySubnav() {
                       <div className="space-y-2">
                         <div className="text-xs font-medium text-muted-foreground">Status</div>
                         <div className="rounded-md border">
-                          <div
-                            role="button"
-                            tabIndex={0}
-                            onClick={() => setFilters((prev) => ({ ...prev, statuses: [] }))}
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter" || e.key === " ") {
-                                e.preventDefault()
-                                setFilters((prev) => ({ ...prev, statuses: [] }))
-                              }
-                            }}
-                            className={cn(
-                              "flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-accent",
-                              filters.statuses.length === 0 && "bg-accent"
-                            )}
-                          >
-                            All statuses
-                            {filters.statuses.length === 0 ? (
-                              <X className="h-3.5 w-3.5 text-muted-foreground" />
-                            ) : null}
-                          </div>
+                          {(() => {
+                            const allStatuses: Opportunity["status"][] = ["To Do", "In Progress", "Done", "Snoozed"]
+                            const allSelected = allStatuses.every((status) => filters.statuses.includes(status))
+                            const someSelected = filters.statuses.length > 0 && !allSelected
+                            
+                            return (
+                              <div
+                                role="button"
+                                tabIndex={0}
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  if (allSelected) {
+                                    setFilters((prev) => ({ ...prev, statuses: [] }))
+                                  } else {
+                                    setFilters((prev) => ({ ...prev, statuses: allStatuses }))
+                                  }
+                                }}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter" || e.key === " ") {
+                                    e.preventDefault()
+                                    if (allSelected) {
+                                      setFilters((prev) => ({ ...prev, statuses: [] }))
+                                    } else {
+                                      setFilters((prev) => ({ ...prev, statuses: allStatuses }))
+                                    }
+                                  }
+                                }}
+                                className={cn(
+                                  "flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-accent",
+                                  filters.statuses.length === 0 && "bg-accent"
+                                )}
+                              >
+                                <Checkbox 
+                                  checked={allSelected}
+                                  className={someSelected ? "data-[state=checked]:bg-primary/50" : ""}
+                                />
+                                <span>All statuses</span>
+                              </div>
+                            )
+                          })()}
                           {["To Do", "In Progress", "Done", "Snoozed"].map((status) => (
                             <div
                               key={status}

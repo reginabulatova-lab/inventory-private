@@ -18,12 +18,28 @@ export type OpportunityFilters = {
   customers: string[]
   escLevels: Opportunity["escLevel"][]
   statuses: Opportunity["status"][]
+  plants: string[]
+  buyerCodes: string[]
+  mrpCodes: string[]
 }
 
 export type SnoozeRule = {
   id: string
   kind: "customer" | "part"
   value: string
+}
+
+const FALLBACK_BUYER_CODES = ["AV67", "TY82", "BN29"]
+const FALLBACK_MRP_CODES = ["XJ45", "WM22", "QR98", "ZL16"]
+
+function pickFallback(list: string[], key: string) {
+  if (list.length === 0) return ""
+  let hash = 0
+  for (let i = 0; i < key.length; i += 1) {
+    hash = (hash * 31 + key.charCodeAt(i)) | 0
+  }
+  const idx = Math.abs(hash) % list.length
+  return list[idx]
 }
 
 // ---------- Preset helpers (exported so Subnav can reuse) ----------
@@ -150,6 +166,9 @@ export function InventoryDataProvider({ children }: { children: React.ReactNode 
     customers: [],
     escLevels: [],
     statuses: [],
+    plants: [],
+    buyerCodes: [],
+    mrpCodes: [],
   })
   const [snoozeRules, setSnoozeRules] = React.useState<SnoozeRule[]>([])
 
@@ -174,6 +193,14 @@ export function InventoryDataProvider({ children }: { children: React.ReactNode 
           ...o,
           customer: o.customer ?? o.supplier ?? "—",
           escLevel: o.escLevel ?? 1,
+          buyerCode:
+            o.buyerCode && FALLBACK_BUYER_CODES.includes(o.buyerCode)
+              ? o.buyerCode
+              : pickFallback(FALLBACK_BUYER_CODES, o.id),
+          mrpCode:
+            o.mrpCode && FALLBACK_MRP_CODES.includes(o.mrpCode)
+              ? o.mrpCode
+              : pickFallback(FALLBACK_MRP_CODES, o.id),
           snoozeRuleIds: o.snoozeRuleIds ?? [],
           prevStatus: o.prevStatus,
         }))
@@ -352,6 +379,9 @@ export function InventoryDataProvider({ children }: { children: React.ReactNode 
           customers: [],
           escLevels: [],
           statuses: [],
+          plants: [],
+          buyerCodes: [],
+          mrpCodes: [],
         }),
       snoozeRules,
       addSnoozeRule,
@@ -399,6 +429,15 @@ export function applyOpportunityFilters(opps: Opportunity[], filters: Opportunit
   }
   if (filters.statuses.length > 0) {
     res = res.filter((o) => filters.statuses.includes(o.status))
+  }
+  if (filters.plants.length > 0) {
+    res = res.filter((o) => filters.plants.includes(o.plant))
+  }
+  if (filters.buyerCodes.length > 0) {
+    res = res.filter((o) => filters.buyerCodes.includes(o.buyerCode))
+  }
+  if (filters.mrpCodes.length > 0) {
+    res = res.filter((o) => filters.mrpCodes.includes(o.mrpCode))
   }
   return res
 }
@@ -451,6 +490,9 @@ export function useFilteredOpportunities(options?: { includeSnoozed?: boolean })
     filters.customers,
     filters.escLevels,
     filters.statuses,
+    filters.plants,
+    filters.buyerCodes,
+    filters.mrpCodes,
   ])
 }
 

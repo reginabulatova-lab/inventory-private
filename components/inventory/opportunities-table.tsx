@@ -130,7 +130,7 @@ export function OpportunitiesTable({ filter }: { filter: Filter }) {
             <TableHead className="border-b border-border border-l" colSpan={4}>
               Supply Event
             </TableHead>
-            <TableHead className="border-b border-border border-l" colSpan={4}>
+            <TableHead className="border-b border-border border-l" colSpan={6}>
               Part
             </TableHead>
 
@@ -150,6 +150,8 @@ export function OpportunitiesTable({ filter }: { filter: Filter }) {
             <TableHead className="border-l border-border">Esc. level</TableHead>
             <TableHead className="border-l border-border">Part Number and Name</TableHead>
             <TableHead className="border-l border-border">Plant</TableHead>
+            <TableHead className="border-l border-border">Buyer code</TableHead>
+            <TableHead className="border-l border-border">MRP code</TableHead>
             <TableHead className="border-l border-border">Sug. Action</TableHead>
           </TableRow>
         </TableHeader>
@@ -183,6 +185,12 @@ export function OpportunitiesTable({ filter }: { filter: Filter }) {
               </TableCell>
               <TableCell className="border-l border-border text-muted-foreground">
                 {r.plant}
+              </TableCell>
+              <TableCell className="border-l border-border text-muted-foreground">
+                {r.buyerCode}
+              </TableCell>
+              <TableCell className="border-l border-border text-muted-foreground">
+                {r.mrpCode}
               </TableCell>
               <TableCell className="border-l border-border">
                 <span className="inline-flex items-center rounded-md bg-[#E6F7F8] px-2 py-1 text-sm font-semibold text-[#0F6E74]">

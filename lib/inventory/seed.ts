@@ -33,6 +33,8 @@ const SUPPLIERS = ["LunaCraft", "Celestial Dynamics", "AeroForge", "NovaComponen
 const CUSTOMERS = ["SkyWorks", "BlueJet", "AeroLink", "StellarWings", "Atlas Airframes"]
 const ASSIGNEES = ["A. Martin", "S. Dubois", "C. Leroy", "M. Rossi", "–"]
 const PLANTS = ["1123", "3535", "2041", "8810"]
+const BUYER_CODES = ["AV67", "TY82", "BN29"]
+const MRP_CODES = ["XJ45", "WM22", "QR98", "ZL16"]
 
 function pick<T>(r: () => number, arr: T[]): T {
   return arr[Math.floor(r() * arr.length)]
@@ -83,6 +85,8 @@ export function seedOpportunities(plan: Plan, count = 220): Opportunity[] {
     const supplier = pick(r, SUPPLIERS)
     const customer = pick(r, CUSTOMERS)
     const plant = pick(r, PLANTS)
+    const buyerCode = pick(r, BUYER_CODES)
+    const mrpCode = pick(r, MRP_CODES)
     const status = weightedStatus(r)
     const escLevel = weightedEscLevel(r)
 
@@ -127,6 +131,8 @@ export function seedOpportunities(plan: Plan, count = 220): Opportunity[] {
       customer,
       escLevel,
       plant,
+      buyerCode,
+      mrpCode,
       supplyType,
       cashImpactEur,
     })

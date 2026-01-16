@@ -228,6 +228,9 @@ export function OpportunitiesTable() {
               <TableHead>Order number</TableHead>
               <TableHead>Part Name</TableHead>
               <TableHead>Part Number</TableHead>
+              <TableHead>Plant</TableHead>
+              <TableHead>Buyer code</TableHead>
+              <TableHead>MRP code</TableHead>
               <TableHead>Suggested Action</TableHead>
               <TableHead>Inventory value</TableHead>
               <TableHead>Suggested Date</TableHead>
@@ -251,6 +254,9 @@ export function OpportunitiesTable() {
                 <TableCell className="font-medium">{r.orderNumber}</TableCell>
                 <TableCell>{r.partName}</TableCell>
                 <TableCell className="text-muted-foreground">{r.partNumber}</TableCell>
+                <TableCell className="text-muted-foreground">{r.plant}</TableCell>
+                <TableCell className="text-muted-foreground">{r.buyerCode}</TableCell>
+                <TableCell className="text-muted-foreground">{r.mrpCode}</TableCell>
                 <TableCell>{r.suggestedAction}</TableCell>
                 <TableCell>{formatEurCompact(r.inventoryValueEur)}</TableCell>
                 <TableCell>{format(new Date(r.suggestedDate), "MMM d, yyyy")}</TableCell>
