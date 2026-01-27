@@ -12,6 +12,8 @@ import {
   Legend,
 } from "recharts"
 import { WidgetCard } from "@/components/inventory/kpi-card"
+import { BottomSheetModal } from "@/components/inventory/bottom-sheet-modal"
+import { OpportunitiesTable } from "@/components/opportunities/opportunities-table"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Button } from "@/components/ui/button"
@@ -69,6 +71,10 @@ function startOfQuarter(d: Date) {
   return new Date(d.getFullYear(), q, 1)
 }
 
+function endOfMonth(d: Date) {
+  return new Date(d.getFullYear(), d.getMonth() + 1, 0, 23, 59, 59, 999)
+}
+
 function endOfQuarter(d: Date) {
   const q = Math.floor(d.getMonth() / 3) * 3
   return new Date(d.getFullYear(), q + 3, 0, 23, 59, 59, 999)
@@ -78,6 +84,28 @@ const MONTH_LABELS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "S
 
 function formatMonthLabel(d: Date) {
   return `${MONTH_LABELS[d.getMonth()]} ${d.getFullYear()}`
+}
+
+function rangeFromMonthLabel(label: string) {
+  const [mon, year] = label.split(" ")
+  const monthIndex = MONTH_LABELS.indexOf(mon)
+  if (monthIndex < 0) return null
+  const y = Number(year)
+  if (!Number.isFinite(y)) return null
+  const from = new Date(y, monthIndex, 1)
+  const to = endOfMonth(from)
+  return { from, to }
+}
+
+function rangeFromQuarterLabel(label: string) {
+  const match = /^Q([1-4])\s+(\d{4})$/.exec(label)
+  if (!match) return null
+  const q = Number(match[1])
+  const y = Number(match[2])
+  if (!Number.isFinite(q) || !Number.isFinite(y)) return null
+  const from = new Date(y, (q - 1) * 3, 1)
+  const to = endOfQuarter(from)
+  return { from, to }
 }
 
 function buildMonthSeries(start: Date, opps: { suggestedDate: string; cashImpactEur: number }[]) {
@@ -219,6 +247,9 @@ function InventoryProjectionTooltip({
 export function InventoryProjectionCard() {
   const [mode, setMode] = React.useState<ViewMode>("month")
   const [showTarget, setShowTarget] = React.useState(true)
+  const [open, setOpen] = React.useState(false)
+  const [periodLabel, setPeriodLabel] = React.useState<string | null>(null)
+  const [periodRange, setPeriodRange] = React.useState<{ from: Date; to: Date } | null>(null)
   const { opportunities, plan, filters } = useInventoryData()
 
   const opps = React.useMemo(() => {
@@ -275,6 +306,20 @@ export function InventoryProjectionCard() {
     })
   }, [mode, monthOpp, quarterOpp])
 
+  const handleChartClick = React.useCallback(
+    (e: any) => {
+      const label = e?.activeLabel ?? e?.activePayload?.[0]?.payload?.label
+      if (!label) return
+      const range =
+        mode === "month" ? rangeFromMonthLabel(label) : rangeFromQuarterLabel(label)
+      if (!range) return
+      setPeriodLabel(label)
+      setPeriodRange(range)
+      setOpen(true)
+    },
+    [mode]
+  )
+
   return (
     <WidgetCard
       title="Projected Inventory"
@@ -309,7 +354,12 @@ export function InventoryProjectionCard() {
     >
       <div className="h-[280px] w-full">
         <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={data} margin={{ top: 8, right: 8, left: 8, bottom: 8 }}>
+          <LineChart
+            data={data}
+            margin={{ top: 8, right: 8, left: 8, bottom: 8 }}
+            onClick={handleChartClick}
+            style={{ cursor: "pointer" }}
+          >
             <CartesianGrid vertical={true} horizontal={true} strokeDasharray="0" opacity={0.25} />
 
             <XAxis
@@ -388,6 +438,21 @@ export function InventoryProjectionCard() {
           </LineChart>
         </ResponsiveContainer>
       </div>
+      <BottomSheetModal
+        open={open}
+        title="Opportunities"
+        subtitle={periodLabel ?? undefined}
+        onClose={() => setOpen(false)}
+      >
+        {periodRange ? (
+          <OpportunitiesTable
+            showToolbar
+            includeSnoozed={false}
+            overrideStatus="To Do"
+            overrideDateRange={periodRange}
+          />
+        ) : null}
+      </BottomSheetModal>
     </WidgetCard>
   )
 }

@@ -2,7 +2,9 @@
 
 import * as React from "react"
 import { usePathname, useRouter } from "next/navigation"
-import { ChevronDown, X } from "lucide-react"
+import { format } from "date-fns"
+import type { DateRange as DayPickerRange } from "react-day-picker"
+import { Calendar as CalendarIcon, ChevronDown, X } from "lucide-react"
 import { Filter } from "lucide-react"
 import {
   DropdownMenu,
@@ -19,7 +21,8 @@ import {
 } from "@/components/ui/select"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { Calendar } from "@/components/ui/calendar"
+import { Popover, PopoverAnchor, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import {
   buildPartKey,
   useInventoryData,
@@ -69,12 +72,41 @@ export function InventorySubnav() {
     const currentLabel = React.useMemo(() => labelFromPath(pathname), [pathname])
     const [isSticky, setIsSticky] = React.useState(false)
     const sentinelRef = React.useRef<HTMLDivElement | null>(null)
-    const { timeframePreset, setTimeframePreset, setDateRange, filters, setFilters, clearFilters } =
+    const { timeframePreset, setTimeframePreset, setDateRange, dateRange, filters, setFilters, clearFilters } =
       useInventoryData()
     const filterOptions = useOpportunitiesForFilters()
     const [partSearch, setPartSearch] = React.useState("")
-    const [openScopeDropdown, setOpenScopeDropdown] = React.useState<"plant" | "buyerCode" | "mrpCode" | null>(null)
+    const [customOpen, setCustomOpen] = React.useState(false)
+    const [openScopeDropdown, setOpenScopeDropdown] = React.useState<
+      "plant" | "buyerCode" | "mrpCode" | null
+    >(null)
   const scopeDefaultsApplied = React.useRef(false)
+
+    const customLabel = React.useMemo(() => {
+      if (dateRange.from && dateRange.to) {
+        return `Custom (${format(dateRange.from, "dd/MM/yy")} - ${format(
+          dateRange.to,
+          "dd/MM/yy"
+        )})`
+      }
+      if (dateRange.from) return `Custom (${format(dateRange.from, "dd/MM/yy")} - )`
+      return "Custom"
+    }, [dateRange.from, dateRange.to])
+
+    const calendarRange = React.useMemo<DayPickerRange | undefined>(() => {
+      if (!dateRange.from) return undefined
+      return { from: dateRange.from, to: dateRange.to }
+    }, [dateRange.from, dateRange.to])
+
+    React.useEffect(() => {
+      if (timeframePreset !== "custom") setCustomOpen(false)
+    }, [timeframePreset])
+
+    React.useEffect(() => {
+      if (timeframePreset !== "custom") return
+      if (dateRange.from && dateRange.to) return
+      setCustomOpen(true)
+    }, [timeframePreset, dateRange.from, dateRange.to])
 
     const toggleValue = React.useCallback(<T,>(list: T[], value: T) => {
       if (list.includes(value)) {
@@ -191,6 +223,7 @@ export function InventorySubnav() {
                 </div>
 
                 {/* Row 2: Controls */}
+                <div className="flex items-center justify-between gap-4 flex-nowrap whitespace-nowrap">
                 <div className="flex items-center gap-4 flex-nowrap whitespace-nowrap">
                 <Popover>
                   <PopoverTrigger asChild>
@@ -1028,35 +1061,99 @@ export function InventorySubnav() {
                 </Popover>
 
                   <div className="h-4 w-px bg-[#E5E7EB]" />
-                  <Select
-                    value={timeframePreset}
-                    onValueChange={(v) => {
-                      const key = v as PresetKey
-                      setTimeframePreset(key)
-                      setDateRange(rangeFromPreset(key))
-                    }}
-                  >
-                    <SelectTrigger className="h-11 w-[260px] bg-white px-3">
-                      <div className="flex flex-col items-start leading-tight">
-                        <span className="text-xs text-muted-foreground">Timeframe</span>
-                        <SelectValue />
-                      </div>
-                    </SelectTrigger>
+                  <div className="flex items-center gap-2">
+                    <Select
+                      value={timeframePreset}
+                      onValueChange={(v) => {
+                        const key = v as PresetKey
+                        setTimeframePreset(key)
+                        if (key === "custom") {
+                          setDateRange({ from: undefined, to: undefined })
+                          setCustomOpen(true)
+                          return
+                        }
+                        setCustomOpen(false)
+                        setDateRange(rangeFromPreset(key))
+                      }}
+                    >
+                      <SelectTrigger className="h-10 w-[260px] bg-white px-3">
+                        <div className="flex flex-col items-start leading-tight">
+                          <span className="text-xs text-muted-foreground">Timeframe</span>
+                          <span className="relative text-sm font-medium text-foreground">
+                            <SelectValue
+                              className={timeframePreset === "custom" ? "opacity-0" : ""}
+                            />
+                            {timeframePreset === "custom" ? (
+                              <span className="absolute inset-0 pointer-events-none">
+                                {customLabel}
+                              </span>
+                            ) : null}
+                          </span>
+                        </div>
+                      </SelectTrigger>
 
-                    <SelectContent align="start">
-                      <SelectItem value="current">Current</SelectItem>
+                      <SelectContent align="start">
+                        <SelectItem value="current">Current</SelectItem>
 
-                      <div className="px-2 py-2 text-xs font-medium text-muted-foreground">
-                        Projected
-                      </div>
+                        <div className="px-2 py-2 text-xs font-medium text-muted-foreground">
+                          Projected
+                        </div>
 
-                      <SelectItem value="today">Today</SelectItem>
-                      <SelectItem value="tomorrow">Tomorrow</SelectItem>
-                      <SelectItem value="eom">End of Month</SelectItem>
-                      <SelectItem value="eoq">End of Quarter</SelectItem>
-                      <SelectItem value="eoy">End of Year</SelectItem>
-                    </SelectContent>
-                  </Select>
+                        <SelectItem value="eom">End of Month</SelectItem>
+                        <SelectItem value="eoq">End of Quarter</SelectItem>
+                        <SelectItem value="eoy">End of Year</SelectItem>
+                        <SelectItem value="custom">Custom</SelectItem>
+                      </SelectContent>
+                    </Select>
+
+                    {timeframePreset === "custom" ? (
+                      <Popover
+                        open={customOpen}
+                        onOpenChange={(open) => {
+                          if (!open && (!dateRange.from || !dateRange.to)) return
+                          setCustomOpen(open)
+                        }}
+                      >
+                        <PopoverTrigger asChild>
+                          <Button
+                            variant="outline"
+                            size="icon"
+                            className="h-10 w-10 bg-white"
+                            aria-label="Pick custom date range"
+                          >
+                            <CalendarIcon className="h-4 w-4 text-muted-foreground" />
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent align="start" className="w-auto p-0">
+                          <Calendar
+                            mode="range"
+                            numberOfMonths={2}
+                            selected={calendarRange}
+                            onSelect={(range) => {
+                              if (!range?.from) return
+                              setDateRange({ from: range.from, to: range.to })
+                              setTimeframePreset("custom")
+                              if (range.from && range.to) setCustomOpen(false)
+                            }}
+                          />
+                        </PopoverContent>
+                      </Popover>
+                    ) : null}
+                  </div>
+                </div>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="outline" className="h-10 bg-white px-4">
+                      Export
+                      <ChevronDown className="ml-2 h-4 w-4 text-muted-foreground" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem>XLS</DropdownMenuItem>
+                    <DropdownMenuItem>CSV</DropdownMenuItem>
+                    <DropdownMenuItem>PDF</DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
                 </div>
               </div>
             </div>

@@ -225,6 +225,7 @@ const rescaleRows = React.useCallback(
         title={active ? active.chart : "Details"}
         subtitle={active ? active.category : undefined}
         onClose={handleClose}
+        seeAllHref="/inventory/analytics"
       >
         {filter && <PartbookTable filter={filter} />}
       </BottomSheetModal>

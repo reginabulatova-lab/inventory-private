@@ -10,7 +10,7 @@ import {
 } from "@/lib/inventory/selectors"
 import { seedOpportunities } from "@/lib/inventory/seed"
 
-export type PresetKey = "current" | "today" | "tomorrow" | "eom" | "eoq" | "eoy"
+export type PresetKey = "current" | "today" | "tomorrow" | "eom" | "eoq" | "eoy" | "custom"
 export type DateRange = { from?: Date; to?: Date }
 export type OpportunityFilters = {
   partKeys: string[]
@@ -31,6 +31,7 @@ export type SnoozeRule = {
 
 const FALLBACK_BUYER_CODES = ["AV67", "TY82", "BN29"]
 const FALLBACK_MRP_CODES = ["XJ45", "WM22", "QR98", "ZL16"]
+const FALLBACK_TEAMS = ["Supply", "Production", "Customer Support"]
 
 function pickFallback(list: string[], key: string) {
   if (list.length === 0) return ""
@@ -100,6 +101,8 @@ export function rangeFromPreset(key: PresetKey, baseNow?: Date): DateRange {
   if (key === "eom") return { from: startOfDay(now), to: endOfDay(endOfMonth(now)) }
   if (key === "eoq") return { from: startOfDay(now), to: endOfDay(endOfQuarter(now)) }
 
+  if (key === "custom") return { from: undefined, to: undefined }
+
   // eoy
   return { from: startOfDay(now), to: endOfDay(endOfYear(now)) }
 }
@@ -119,6 +122,8 @@ type InventoryDataContextValue = {
   snoozeByIds: (ids: string[]) => void
   unsnoozeByIds: (ids: string[]) => void
   setStatusByIds: (ids: string[], status: Opportunity["status"]) => void
+  setAssigneeByIds: (ids: string[], assignee: Opportunity["assignee"]) => void
+  setTeamByIds: (ids: string[], team: Opportunity["team"]) => void
 
   /**
    * Expose a stable "now" so other computations can be consistent too if needed.
@@ -178,6 +183,7 @@ export function InventoryDataProvider({ children }: { children: React.ReactNode 
 
   // ✅ when preset changes, derive the range from the same stable "now"
   React.useEffect(() => {
+    if (timeframePreset === "custom") return
     setDateRange(rangeFromPreset(timeframePreset, now))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [timeframePreset])
@@ -201,6 +207,7 @@ export function InventoryDataProvider({ children }: { children: React.ReactNode 
             o.mrpCode && FALLBACK_MRP_CODES.includes(o.mrpCode)
               ? o.mrpCode
               : pickFallback(FALLBACK_MRP_CODES, o.id),
+          team: o.team ?? pickFallback(FALLBACK_TEAMS, o.id),
           snoozeRuleIds: o.snoozeRuleIds ?? [],
           prevStatus: o.prevStatus,
         }))
@@ -306,6 +313,16 @@ export function InventoryDataProvider({ children }: { children: React.ReactNode 
     )
   }, [])
 
+  const setAssigneeByIds = React.useCallback((ids: string[], assignee: Opportunity["assignee"]) => {
+    if (ids.length === 0) return
+    setOpportunities((prev) => prev.map((o) => (ids.includes(o.id) ? { ...o, assignee } : o)))
+  }, [])
+
+  const setTeamByIds = React.useCallback((ids: string[], team: Opportunity["team"]) => {
+    if (ids.length === 0) return
+    setOpportunities((prev) => prev.map((o) => (ids.includes(o.id) ? { ...o, team } : o)))
+  }, [])
+
   const applyRule = React.useCallback((rule: SnoozeRule, rows: Opportunity[]) => {
     return rows.map((o) => {
       const matches =
@@ -369,6 +386,8 @@ export function InventoryDataProvider({ children }: { children: React.ReactNode 
       snoozeByIds,
       unsnoozeByIds,
       setStatusByIds,
+      setAssigneeByIds,
+      setTeamByIds,
       now,
       filters,
       setFilters,
@@ -396,6 +415,8 @@ export function InventoryDataProvider({ children }: { children: React.ReactNode 
       snoozeByIds,
       unsnoozeByIds,
       setStatusByIds,
+      setAssigneeByIds,
+      setTeamByIds,
       now,
       filters,
       snoozeRules,

@@ -19,6 +19,7 @@ export type Opportunity = {
   suggestedDate: string // ISO date (YYYY-MM-DD)
   status: OpportunityStatus
   assignee: string
+  team: string
 
   // Extra fields used by Control Tower table / widgets later
   supplier: string

@@ -3,12 +3,15 @@
 import * as React from "react"
 import { format } from "date-fns"
 import {
+  applyOpportunityFilters,
   buildPartKey,
   useFilteredOpportunities,
   useInventoryData,
   useOpportunitiesForFilters,
 } from "@/components/inventory/inventory-data-provider"
+import type { Opportunity } from "@/lib/inventory/types"
 import {
+  buildConcentrationBuckets,
   capOpportunitiesTotal,
   computeHealthRiskKPIs,
   filterOpportunitiesByMode,
@@ -19,6 +22,15 @@ import {
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Badge } from "@/components/ui/badge"
+import {
+  ArrowDown,
+  ArrowRight,
+  CircleCheckBig,
+  CircleDotDashed,
+  Clock,
+  PauseCircle,
+  X,
+} from "lucide-react"
 import {
   Dialog,
   DialogContent,
@@ -44,6 +56,30 @@ import {
 } from "@/components/ui/table"
 import { Separator } from "@/components/ui/separator"
 
+export type OpportunitiesTableFilter =
+  | { kind: "type"; category: string }
+  | { kind: "status"; category: string }
+  | { kind: "concentration"; category: string }
+  | null
+
+const TEAM_OPTIONS = ["Supply", "Production", "Customer Support"]
+const ACTION_STYLES: Record<
+  string,
+  { icon?: React.ReactNode; className: string }
+> = {
+  Cancel: {
+    icon: <X className="h-3.5 w-3.5" />,
+    className: "bg-red-100 text-red-700 border border-red-200",
+  },
+  "Push Out": {
+    icon: <ArrowRight className="h-3.5 w-3.5" />,
+    className: "bg-blue-100 text-blue-700 border border-blue-200",
+  },
+  "Pull in": {
+    className: "bg-emerald-100 text-emerald-700 border border-emerald-200",
+  },
+}
+
 function formatEurCompact(value: number) {
   const abs = Math.abs(value)
   if (abs >= 1_000_000) return `€${(value / 1_000_000).toFixed(1)}M`
@@ -51,19 +87,107 @@ function formatEurCompact(value: number) {
   return `€${Math.round(value)}`
 }
 
-export function OpportunitiesTable() {
+function ActionBadge({ action }: { action: string }) {
+  const style = ACTION_STYLES[action] ?? {
+    className: "bg-muted text-foreground border border-border",
+  }
+  return (
+    <Badge className={`gap-1 rounded-full px-2 py-1 text-xs font-semibold ${style.className}`}>
+      {style.icon ? <span className="inline-flex">{style.icon}</span> : null}
+      {action}
+    </Badge>
+  )
+}
+
+function statusColorClass(status: string) {
+  if (status === "In Progress") return "text-blue-600"
+  if (status === "Done") return "text-emerald-600"
+  if (status === "Snoozed") return "text-amber-600"
+  return "text-slate-500"
+}
+
+function statusIcon(status: string) {
+  const className = `h-3.5 w-3.5 ${statusColorClass(status)}`
+  if (status === "In Progress") return <Clock className={className} />
+  if (status === "Done") return <CircleCheckBig className={className} />
+  if (status === "Snoozed") return <PauseCircle className={className} />
+  return <CircleDotDashed className={`${className} fill-current`} />
+}
+
+function StatusLabel({ status }: { status: string }) {
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      {statusIcon(status)}
+      <span className="text-sm text-foreground">{status}</span>
+    </span>
+  )
+}
+
+export function OpportunitiesTable({
+  filter,
+  showToolbar = true,
+  includeSnoozed = true,
+  overrideDateRange,
+  overrideStatus,
+}: {
+  filter?: OpportunitiesTableFilter
+  showToolbar?: boolean
+  includeSnoozed?: boolean
+  overrideDateRange?: { from?: Date; to?: Date }
+  overrideStatus?: Opportunity["status"]
+}) {
   const {
     snoozeByIds,
     unsnoozeByIds,
     setStatusByIds,
+    setAssigneeByIds,
+    setTeamByIds,
     dateRange,
+    plan,
+    opportunities,
+    filters,
     snoozeRules,
     addSnoozeRule,
     removeSnoozeRule,
   } = useInventoryData()
   const filterOptions = useOpportunitiesForFilters()
-  const baseOpportunities = useFilteredOpportunities({ includeSnoozed: false })
-  const allRows = useFilteredOpportunities({ includeSnoozed: true })
+  const defaultBase = useFilteredOpportunities({ includeSnoozed: false })
+  const defaultRows = useFilteredOpportunities({ includeSnoozed })
+
+  const overrideActive = Boolean(overrideDateRange || overrideStatus)
+  const overrideRows = React.useMemo(() => {
+    if (!overrideActive) return defaultRows
+    const from =
+      (overrideDateRange?.from ?? dateRange.from)?.getTime() ?? -Infinity
+    const to = (overrideDateRange?.to ?? dateRange.to)?.getTime() ?? Infinity
+    let res = opportunities.filter((o) => {
+      if (o.plan !== plan) return false
+      if (!includeSnoozed && o.status === "Snoozed") return false
+      const t = new Date(o.suggestedDate).getTime()
+      if (!Number.isFinite(t)) return false
+      return t >= from && t <= to
+    })
+    res = applyOpportunityFilters(res, filters)
+    if (overrideStatus) res = res.filter((o) => o.status === overrideStatus)
+    return res
+  }, [
+    overrideActive,
+    overrideDateRange?.from,
+    overrideDateRange?.to,
+    overrideStatus,
+    dateRange.from,
+    dateRange.to,
+    opportunities,
+    plan,
+    includeSnoozed,
+    filters,
+    defaultRows,
+  ])
+
+  const baseOpportunities = overrideActive
+    ? overrideRows.filter((o) => o.status !== "Snoozed")
+    : defaultBase
+  const allRows = overrideActive ? overrideRows : defaultRows
 
   const kpis = computeHealthRiskKPIs(baseOpportunities, dateRange.from, dateRange.to)
   const mode = getOpportunityMode(kpis.overstockEur, kpis.understockEur)
@@ -90,7 +214,24 @@ export function OpportunitiesTable() {
     () => getOpportunitiesScale(baseTotal, targetTotal),
     [baseTotal, targetTotal]
   )
-  const rows = scopedAll
+  const filteredRows = React.useMemo(() => {
+    let res = scopedAll
+    if (filter?.kind === "type") {
+      res = res.filter((o) => o.suggestedAction === filter.category)
+    }
+    if (filter?.kind === "status") {
+      res = res.filter((o) => o.status === filter.category)
+    }
+    if (filter?.kind === "concentration") {
+      const buckets = buildConcentrationBuckets(scopedBase)
+      const match = buckets.find((b) => b.bucket === filter.category)
+      const ids = new Set(match?.ids ?? [])
+      res = res.filter((o) => ids.has(o.id))
+    }
+    return res
+  }, [scopedAll, scopedBase, filter])
+
+  const rows = filteredRows
   const displayRows = React.useMemo(() => {
     const scaled = rows.map((row) => ({
       ...row,
@@ -98,6 +239,12 @@ export function OpportunitiesTable() {
     }))
     return scaled.sort((a, b) => b.inventoryValueEur - a.inventoryValueEur)
   }, [rows, scale])
+
+  const assigneeOptions = React.useMemo(() => {
+    const values = Array.from(new Set(allRows.map((r) => r.assignee).filter(Boolean)))
+    values.sort((a, b) => a.localeCompare(b))
+    return values.length > 0 ? values : ["–"]
+  }, [allRows])
 
   const [selected, setSelected] = React.useState<Record<string, boolean>>({})
   const [openSnooze, setOpenSnooze] = React.useState(false)
@@ -162,37 +309,39 @@ export function OpportunitiesTable() {
 
   return (
     <div className="space-y-3">
-      <div className="rounded-xl border bg-background p-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex flex-wrap items-center gap-3 text-sm">
-            {(["To Do", "In Progress", "Done", "Snoozed"] as const).map((status, idx) => (
-              <React.Fragment key={status}>
-                {idx > 0 ? <Separator orientation="vertical" className="h-5" /> : null}
-                <div className="flex items-center gap-2">
-                  <span className="font-medium text-foreground">{status}</span>
-                  <span className="text-muted-foreground">{statusSummary.summary[status].count}</span>
-                  <span className="text-muted-foreground">
-                    ({formatEurCompact(statusSummary.summary[status].total)})
-                  </span>
-                </div>
-              </React.Fragment>
-            ))}
-            <Separator orientation="vertical" className="h-5" />
-            <div className="flex items-center gap-2">
-              <span className="font-medium text-foreground">Non-snoozed total</span>
-              <span className="text-muted-foreground">
-                {formatEurCompact(statusSummary.nonSnoozedTotal)}
-              </span>
+      {showToolbar ? (
+        <div className="rounded-xl border bg-background p-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex flex-wrap items-center gap-3 text-sm">
+              {(["To Do", "In Progress", "Done", "Snoozed"] as const).map((status, idx) => (
+                <React.Fragment key={status}>
+                  {idx > 0 ? <Separator orientation="vertical" className="h-5" /> : null}
+                  <div className="flex items-center gap-2">
+                    <span className="font-medium text-foreground">{status}</span>
+                    <span className="text-muted-foreground">{statusSummary.summary[status].count}</span>
+                    <span className="text-muted-foreground">
+                      ({formatEurCompact(statusSummary.summary[status].total)})
+                    </span>
+                  </div>
+                </React.Fragment>
+              ))}
+              <Separator orientation="vertical" className="h-5" />
+              <div className="flex items-center gap-2">
+                <span className="font-medium text-foreground">Non-snoozed total</span>
+                <span className="text-muted-foreground">
+                  {formatEurCompact(statusSummary.nonSnoozedTotal)}
+                </span>
+              </div>
             </div>
+            <Button variant="secondary" className="h-9" onClick={() => setOpenRules(true)}>
+              Manage snooze rules
+            </Button>
           </div>
-          <Button variant="secondary" className="h-9" onClick={() => setOpenRules(true)}>
-            Manage snooze rules
-          </Button>
         </div>
-      </div>
+      ) : null}
 
       {/* Action bar */}
-      {selectedCount > 0 && (
+      {showToolbar && selectedCount > 0 && (
         <div className="sticky top-[72px] z-10 flex items-center justify-between rounded-xl border bg-background px-4 py-3 shadow-sm">
           <div className="text-sm text-muted-foreground">
             <span className="font-medium text-foreground">{selectedCount}</span>{" "}
@@ -225,17 +374,23 @@ export function OpportunitiesTable() {
                   aria-label="Select all"
                 />
               </TableHead>
+              <TableHead>Opportunity type</TableHead>
+              <TableHead>Suggested Date</TableHead>
+              <TableHead>
+                <div className="flex items-center gap-1">
+                  Inventory value
+                  <ArrowDown className="h-3.5 w-3.5 text-muted-foreground" />
+                </div>
+              </TableHead>
+              <TableHead>Status</TableHead>
+              <TableHead>Team</TableHead>
+              <TableHead>Assignee</TableHead>
               <TableHead>Order number</TableHead>
               <TableHead>Part Name</TableHead>
               <TableHead>Part Number</TableHead>
               <TableHead>Plant</TableHead>
               <TableHead>Buyer code</TableHead>
               <TableHead>MRP code</TableHead>
-              <TableHead>Suggested Action</TableHead>
-              <TableHead>Inventory value</TableHead>
-              <TableHead>Suggested Date</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead>Assignee</TableHead>
             </TableRow>
           </TableHeader>
 
@@ -251,15 +406,15 @@ export function OpportunitiesTable() {
                     aria-label={`Select ${r.orderNumber}`}
                   />
                 </TableCell>
-                <TableCell className="font-medium">{r.orderNumber}</TableCell>
-                <TableCell>{r.partName}</TableCell>
-                <TableCell className="text-muted-foreground">{r.partNumber}</TableCell>
-                <TableCell className="text-muted-foreground">{r.plant}</TableCell>
-                <TableCell className="text-muted-foreground">{r.buyerCode}</TableCell>
-                <TableCell className="text-muted-foreground">{r.mrpCode}</TableCell>
-                <TableCell>{r.suggestedAction}</TableCell>
+                <TableCell>
+                  <ActionBadge action={r.suggestedAction} />
+                </TableCell>
+                <TableCell>
+                  {r.suggestedAction === "Cancel" || !r.suggestedDate
+                    ? ""
+                    : format(new Date(r.suggestedDate), "MMM d, yyyy")}
+                </TableCell>
                 <TableCell>{formatEurCompact(r.inventoryValueEur)}</TableCell>
-                <TableCell>{format(new Date(r.suggestedDate), "MMM d, yyyy")}</TableCell>
                 <TableCell>
                   <Select
                     value={r.status}
@@ -267,18 +422,65 @@ export function OpportunitiesTable() {
                       setStatusByIds([r.id], value as any)
                     }
                   >
-                    <SelectTrigger className="h-8 w-[140px]">
+                    <SelectTrigger className="h-8 w-[150px] border-0 bg-transparent px-2 shadow-none hover:bg-muted/40 data-[state=open]:bg-muted/60">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent align="start">
-                      <SelectItem value="To Do">To Do</SelectItem>
-                      <SelectItem value="In Progress">In Progress</SelectItem>
-                      <SelectItem value="Done">Done</SelectItem>
-                      <SelectItem value="Snoozed">Snoozed</SelectItem>
+                      <SelectItem value="To Do">
+                        <StatusLabel status="To Do" />
+                      </SelectItem>
+                      <SelectItem value="In Progress">
+                        <StatusLabel status="In Progress" />
+                      </SelectItem>
+                      <SelectItem value="Done">
+                        <StatusLabel status="Done" />
+                      </SelectItem>
+                      <SelectItem value="Snoozed">
+                        <StatusLabel status="Snoozed" />
+                      </SelectItem>
                     </SelectContent>
                   </Select>
                 </TableCell>
-                <TableCell>{r.assignee}</TableCell>
+                <TableCell>
+                  <Select
+                    value={r.team}
+                    onValueChange={(value) => setTeamByIds([r.id], value)}
+                  >
+                    <SelectTrigger className="h-8 w-[180px] border-0 bg-transparent px-2 text-sm shadow-none hover:bg-muted/40 data-[state=open]:bg-muted/60">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent align="start">
+                      {TEAM_OPTIONS.map((team) => (
+                        <SelectItem key={team} value={team}>
+                          {team}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </TableCell>
+                <TableCell>
+                  <Select
+                    value={r.assignee}
+                    onValueChange={(value) => setAssigneeByIds([r.id], value)}
+                  >
+                    <SelectTrigger className="h-8 w-[160px] border-0 bg-transparent px-2 text-sm shadow-none hover:bg-muted/40 data-[state=open]:bg-muted/60">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent align="start">
+                      {assigneeOptions.map((assignee) => (
+                        <SelectItem key={assignee} value={assignee}>
+                          {assignee}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </TableCell>
+                <TableCell className="font-medium">{r.orderNumber}</TableCell>
+                <TableCell>{r.partName}</TableCell>
+                <TableCell>{r.partNumber}</TableCell>
+                <TableCell>{r.plant}</TableCell>
+                <TableCell>{r.buyerCode}</TableCell>
+                <TableCell>{r.mrpCode}</TableCell>
               </TableRow>
             ))}
           </TableBody>

@@ -4,7 +4,7 @@ import * as React from "react"
 import { WidgetCard } from "@/components/inventory/kpi-card"
 import { PieBreakdown, PieDatum } from "@/components/inventory/pie-breakdown"
 import { BottomSheetModal } from "@/components/inventory/bottom-sheet-modal"
-import { OpportunitiesTable } from "@/components/inventory/opportunities-table"
+import { OpportunitiesTable } from "@/components/opportunities/opportunities-table"
 import {
   useFilteredOpportunities,
   useInventoryData,
@@ -68,20 +68,6 @@ function BarTooltip({
       <div className="font-medium text-foreground">{formatEurCompact(Number(value))}</div>
     </div>
   )
-}
-
-function rescaleRows<T extends { value: number }>(
-  rows: T[],
-  newTotal: number
-) {
-  const sum = rows.reduce((acc, row) => acc + row.value, 0) || 1
-  const scaled = rows.map((row) => ({
-    ...row,
-    value: Math.round((row.value / sum) * newTotal),
-  }))
-  const diff = newTotal - scaled.reduce((acc, row) => acc + row.value, 0)
-  if (scaled.length) scaled[0].value += diff
-  return scaled
 }
 
 export function OptimizationOpportunitiesSection() {
@@ -148,17 +134,16 @@ export function OptimizationOpportunitiesSection() {
           ]
         : [{ name: "Pull in", value: totals["Pull in"], color: TYPE_COLORS[2] }]
 
-    const scaled = rescaleRows(rows, targetTotal)
-    const scaledTotal = scaled.reduce((sum, row) => sum + row.value, 0)
+    const scaledTotal = rows.reduce((sum, row) => sum + row.value, 0)
 
-    return scaled.map((row) => ({
+    return rows.map((row) => ({
       name: row.name,
       value: row.value,
       displayValue: formatEurCompact(row.value),
       percent: formatPct(row.value, scaledTotal),
       color: row.color,
     }))
-  }, [scopedOpportunities, targetTotal, mode, scale])
+  }, [scopedOpportunities, mode, scale])
 
   const typeTotal = React.useMemo(
     () => typeData.reduce((sum, row) => sum + row.value, 0),
@@ -181,17 +166,16 @@ export function OptimizationOpportunitiesSection() {
       { name: "Done", value: totals.Done, color: STATUS_COLORS[2] },
     ]
 
-    const scaled = rescaleRows(rows, targetTotal)
-    const scaledTotal = scaled.reduce((sum, row) => sum + row.value, 0)
+    const scaledTotal = rows.reduce((sum, row) => sum + row.value, 0)
 
-    return scaled.map((row) => ({
+    return rows.map((row) => ({
       name: row.name,
       value: row.value,
       displayValue: formatEurCompact(row.value),
       percent: formatPct(row.value, scaledTotal),
       color: row.color,
     }))
-  }, [scopedOpportunities, targetTotal, scale])
+  }, [scopedOpportunities, scale])
 
   const statusTotal = React.useMemo(
     () => statusData.reduce((sum, row) => sum + row.value, 0),
@@ -204,10 +188,8 @@ export function OptimizationOpportunitiesSection() {
       bucket: bucket.bucket,
       value: Math.round(bucket.totalEur * scale),
     }))
-
-    const scaled = rescaleRows(rows, targetTotal)
-    return scaled
-  }, [scopedOpportunities, targetTotal])
+    return rows
+  }, [scopedOpportunities, scale])
 
   const close = () => {
     setOpen(false)
@@ -238,6 +220,8 @@ export function OptimizationOpportunitiesSection() {
         : active?.widget === "concentration"
           ? { kind: "concentration" as const, category: active.category }
           : null
+
+  const seeAllHref = "/inventory/opportunities"
 
   return (
     <section className="mt-10">
@@ -300,8 +284,9 @@ export function OptimizationOpportunitiesSection() {
         title={modalTitle}
         subtitle={active?.category}
         onClose={close}
+        seeAllHref={seeAllHref}
       >
-        <OpportunitiesTable filter={filter} />
+        <OpportunitiesTable filter={filter} showToolbar includeSnoozed={false} />
       </BottomSheetModal>
     </section>
   )

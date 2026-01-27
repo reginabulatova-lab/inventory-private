@@ -1,6 +1,6 @@
 import { InventoryHeader } from "@/components/inventory/inventory-header"
 import { InventorySubnav } from "@/components/inventory/inventory-subnav"
-import { OpportunitiesTable } from "@/components/opportunities/opportunities-table"
+import { OpportunitiesPageContent } from "@/components/opportunities/opportunities-page-content"
 import { FloatingAIChat } from "@/components/ai/floating-ai-chat"
 
 export default function OpportunitiesPage() {
@@ -13,7 +13,7 @@ export default function OpportunitiesPage() {
          this section sits just beneath it */}
       <div className="px-6 pt-4 pb-6">
 
-        <OpportunitiesTable />
+        <OpportunitiesPageContent />
       </div>
 
       <FloatingAIChat />

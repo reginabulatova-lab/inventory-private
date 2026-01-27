@@ -32,6 +32,7 @@ const PARTS = [
 const SUPPLIERS = ["LunaCraft", "Celestial Dynamics", "AeroForge", "NovaComponents", "Orion Industrial"]
 const CUSTOMERS = ["SkyWorks", "BlueJet", "AeroLink", "StellarWings", "Atlas Airframes"]
 const ASSIGNEES = ["A. Martin", "S. Dubois", "C. Leroy", "M. Rossi", "–"]
+const TEAMS = ["Supply", "Production", "Customer Support"]
 const PLANTS = ["1123", "3535", "2041", "8810"]
 const BUYER_CODES = ["AV67", "TY82", "BN29"]
 const MRP_CODES = ["XJ45", "WM22", "QR98", "ZL16"]
@@ -127,6 +128,7 @@ export function seedOpportunities(plan: Plan, count = 220): Opportunity[] {
       suggestedDate: toISODate(date),
       status,
       assignee: pick(r, ASSIGNEES),
+      team: pick(r, TEAMS),
       supplier,
       customer,
       escLevel,

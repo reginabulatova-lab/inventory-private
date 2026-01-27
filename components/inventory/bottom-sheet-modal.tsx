@@ -1,6 +1,7 @@
 "use client"
 
 import * as React from "react"
+import Link from "next/link"
 import { X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
@@ -10,6 +11,8 @@ type BottomSheetModalProps = {
   title: string
   subtitle?: string
   onClose: () => void
+  seeAllHref?: string
+  seeAllLabel?: string
   children?: React.ReactNode
 }
 
@@ -18,6 +21,8 @@ export function BottomSheetModal({
   title,
   subtitle,
   onClose,
+  seeAllHref,
+  seeAllLabel = "See all",
   children,
 }: BottomSheetModalProps) {
   React.useEffect(() => {
@@ -55,9 +60,16 @@ export function BottomSheetModal({
               ) : null}
             </div>
 
-            <Button variant="ghost" size="icon" onClick={onClose} aria-label="Close">
-              <X className="h-5 w-5" />
-            </Button>
+            <div className="flex items-center gap-2">
+              {seeAllHref ? (
+                <Button variant="ghost" size="sm" asChild>
+                  <Link href={seeAllHref}>{seeAllLabel}</Link>
+                </Button>
+              ) : null}
+              <Button variant="ghost" size="icon" onClick={onClose} aria-label="Close">
+                <X className="h-5 w-5" />
+              </Button>
+            </div>
           </div>
 
           <div className="mt-4 flex-1 min-h-0 overflow-y-auto rounded-xl bg-background p-0">

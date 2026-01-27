@@ -29,8 +29,6 @@ export function ActionBar() {
 
               <SelectGroup>
                 <SelectLabel>Projected</SelectLabel>
-                <SelectItem value="today">Today</SelectItem>
-                <SelectItem value="tomorrow">Tomorrow</SelectItem>
                 <SelectItem value="eom">End of Month</SelectItem>
                 <SelectItem value="eoq">End of Quarter</SelectItem>
               </SelectGroup>
