@@ -1,3 +1,4 @@
+import * as React from "react"
 import { InventoryHeader } from "@/components/inventory/inventory-header"
 import { InventorySubnav } from "@/components/inventory/inventory-subnav"
 import { OpportunitiesPageContent } from "@/components/opportunities/opportunities-page-content"
@@ -12,8 +13,9 @@ export default function OpportunitiesPage() {
       {/* “somewhere below the title” — if InventoryHeader already contains a title,
          this section sits just beneath it */}
       <div className="px-6 pt-4 pb-6">
-
-        <OpportunitiesPageContent />
+        <React.Suspense fallback={null}>
+          <OpportunitiesPageContent />
+        </React.Suspense>
       </div>
 
       <FloatingAIChat />
