@@ -227,7 +227,7 @@ function InventoryProjectionTooltip({
               className="inline-block w-7"
               style={{
                 height: 0,
-                borderTop: "3px solid #9CA3AF",
+                borderTop: "3px solid #F59E0B",
                 borderRadius: 999,
               }}
             />
@@ -250,14 +250,24 @@ export function InventoryProjectionCard() {
   const [open, setOpen] = React.useState(false)
   const [periodLabel, setPeriodLabel] = React.useState<string | null>(null)
   const [periodRange, setPeriodRange] = React.useState<{ from: Date; to: Date } | null>(null)
-  const { opportunities, plan, filters } = useInventoryData()
+  const { opportunities, plan, filters, dateRange } = useInventoryData()
 
   const opps = React.useMemo(() => {
-    const base = opportunities.filter((o) => o.plan === plan && o.status !== "Snoozed")
+    const from = dateRange.from ? dateRange.from.getTime() : -Infinity
+    const to = dateRange.to ? dateRange.to.getTime() : Infinity
+    const base = opportunities.filter((o) => {
+      if (o.plan !== plan) return false
+      if (o.status === "Snoozed" || o.status === "Canceled") return false
+      const t = new Date(o.suggestedDate).getTime()
+      if (!Number.isFinite(t)) return false
+      return t >= from && t <= to
+    })
     return applyOpportunityFilters(base, filters)
   }, [
     opportunities,
     plan,
+    dateRange.from,
+    dateRange.to,
     filters.partKeys,
     filters.suggestedActions,
     filters.customers,
@@ -273,35 +283,29 @@ export function InventoryProjectionCard() {
 
   const data = React.useMemo<Point[]>(() => {
     if (mode === "month") {
-      const totalOpp = monthOpp.reduce((sum, row) => sum + row.oppEur, 0)
-      const cap = Math.max(0, kpis.inventoryEur)
-      const scale = totalOpp > cap && totalOpp > 0 ? cap / totalOpp : 1
       return monthOpp.map((row, i) => {
-        const oppK = Math.round((row.oppEur * scale) / 1000)
+        const oppK = Math.round(row.oppEur / 1000)
         const erpBase = ERP_MONTH_TEMPLATE[i % ERP_MONTH_TEMPLATE.length]
-        const hasOpp = row.oppEur > 0
-        const erp = hasOpp ? Math.max(erpBase, Math.round(oppK * 1.25)) : erpBase
+        const target = Math.max(Math.round(oppK * 1.08), oppK + 15)
+        const erp = Math.max(erpBase, target + Math.max(25, Math.round(target * 0.12)))
         return {
           label: row.label,
-          opp: hasOpp ? oppK : erpBase,
+          opp: oppK,
           erp,
-          target: row.targetK,
+          target,
         }
       })
     }
-    const totalOpp = quarterOpp.reduce((sum, row) => sum + row.oppEur, 0)
-    const cap = Math.max(0, kpis.inventoryEur)
-    const scale = totalOpp > cap && totalOpp > 0 ? cap / totalOpp : 1
     return quarterOpp.map((row, i) => {
-      const oppK = Math.round((row.oppEur * scale) / 1000)
+      const oppK = Math.round(row.oppEur / 1000)
       const erpBase = ERP_QUARTER_TEMPLATE[i % ERP_QUARTER_TEMPLATE.length]
-      const hasOpp = row.oppEur > 0
-      const erp = hasOpp ? Math.max(erpBase, Math.round(oppK * 1.25)) : erpBase
+      const target = Math.max(Math.round(oppK * 1.08), oppK + 15)
+      const erp = Math.max(erpBase, target + Math.max(25, Math.round(target * 0.12)))
       return {
         label: row.label,
-        opp: hasOpp ? oppK : erpBase,
+        opp: oppK,
         erp,
-        target: row.targetK,
+        target,
       }
     })
   }, [mode, monthOpp, quarterOpp])
@@ -448,8 +452,10 @@ export function InventoryProjectionCard() {
           <OpportunitiesTable
             showToolbar
             includeSnoozed={false}
-            overrideStatus="To Do"
+            excludeStatuses={["Canceled"]}
             overrideDateRange={periodRange}
+            useRawInventoryValue
+            disableModeFilter
           />
         ) : null}
       </BottomSheetModal>

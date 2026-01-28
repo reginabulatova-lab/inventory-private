@@ -217,7 +217,6 @@ const rescaleRows = React.useCallback(
           />
         </WidgetCard>
 
-        <InventoryProjectionCard />
       </div>
 
       <BottomSheetModal

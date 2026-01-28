@@ -23,6 +23,7 @@ import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Calendar } from "@/components/ui/calendar"
 import { Popover, PopoverAnchor, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { SnoozeRulesDialog } from "@/components/opportunities/snooze-rules-dialog"
 import {
   buildPartKey,
   useInventoryData,
@@ -42,8 +43,8 @@ type View = {
 
 const VIEWS: View[] = [
   { label: "Control Tower", href: "/inventory/control-tower" },
-  { label: "Analytics", href: "/inventory/analytics" },
   { label: "Opportunities", href: "/inventory/opportunities/" },
+  { label: "Part book", href: "/inventory/analytics" },
 ]
 
 function labelFromPath(pathname: string) {
@@ -58,7 +59,7 @@ function labelFromPath(pathname: string) {
       case "control-tower":
         return "Control Tower"
       case "analytics":
-        return "Analytics"
+        return "Part book"
       case "opportunities":
         return "Opportunities"
       default:
@@ -77,6 +78,7 @@ export function InventorySubnav() {
     const filterOptions = useOpportunitiesForFilters()
     const [partSearch, setPartSearch] = React.useState("")
     const [customOpen, setCustomOpen] = React.useState(false)
+    const [openSnoozeRules, setOpenSnoozeRules] = React.useState(false)
     const [openScopeDropdown, setOpenScopeDropdown] = React.useState<
       "plant" | "buyerCode" | "mrpCode" | null
     >(null)
@@ -92,6 +94,8 @@ export function InventorySubnav() {
       if (dateRange.from) return `Custom (${format(dateRange.from, "dd/MM/yy")} - )`
       return "Custom"
     }, [dateRange.from, dateRange.to])
+
+    const isOpportunities = (pathname || "").startsWith("/inventory/opportunities")
 
     const calendarRange = React.useMemo<DayPickerRange | undefined>(() => {
       if (!dateRange.from) return undefined
@@ -180,6 +184,10 @@ export function InventorySubnav() {
         <>
           {/* Sentinel */}
           <div ref={sentinelRef} />
+          <SnoozeRulesDialog
+            open={openSnoozeRules}
+            onOpenChange={setOpenSnoozeRules}
+          />
       
           {/* Sticky subnav */}
           <div
@@ -190,40 +198,33 @@ export function InventorySubnav() {
           >
             <div className="px-6 pt-6">
             <div className="flex flex-col gap-5">
-            {/* Row 1: Inventory navigation (unchanged content) */}
+            {/* Row 1: Inventory navigation */}
             <div className="flex items-center gap-6">
-                  {/* Left */}
-                  <div className="flex items-center gap-2 text-lg min-w-0">
-                    <span className="font-medium text-muted-foreground shrink-0">Inventory</span>
-                    <span className="text-muted-foreground shrink-0">/</span>
-
-                    <div className="min-w-0">
-                      {!mounted ? (
-                        <span className="text-lg font-semibold">{currentLabel}</span>
-                      ) : (
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" className="h-auto px-1 text-lg font-semibold">
-                              {currentLabel}
-                              <ChevronDown className="ml-1 h-4 w-4 text-muted-foreground" />
-                            </Button>
-                          </DropdownMenuTrigger>
-
-                          <DropdownMenuContent align="start">
-                            {VIEWS.map((v) => (
-                              <DropdownMenuItem key={v.href} onClick={() => router.push(v.href)}>
-                                {v.label}
-                              </DropdownMenuItem>
-                            ))}
-                          </DropdownMenuContent>
-                        </DropdownMenu>
+              <div className="flex items-center gap-6 text-base font-semibold">
+                {VIEWS.map((v) => {
+                  const active = (pathname || "").startsWith(v.href.replace(/\/+$/, ""))
+                  return (
+                    <button
+                      key={v.href}
+                      type="button"
+                      onClick={() => router.push(v.href)}
+                      className={cn(
+                        "relative pb-1 text-base font-semibold transition-colors",
+                        active ? "text-foreground" : "text-muted-foreground hover:text-foreground"
                       )}
-                    </div>
-                  </div>
-                </div>
+                    >
+                      {v.label}
+                      {active ? (
+                        <span className="absolute left-0 right-0 -bottom-0.5 h-0.5 bg-teal-600" />
+                      ) : null}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
 
                 {/* Row 2: Controls */}
-                <div className="flex items-center justify-between gap-4 flex-nowrap whitespace-nowrap">
+                <div className="flex items-center justify-between gap-4 flex-nowrap whitespace-nowrap mt-4">
                 <div className="flex items-center gap-4 flex-nowrap whitespace-nowrap">
                 <Popover>
                   <PopoverTrigger asChild>
@@ -983,7 +984,14 @@ export function InventorySubnav() {
                         <div className="text-xs font-medium text-muted-foreground">Status</div>
                         <div className="rounded-md border">
                           {(() => {
-                            const allStatuses: Opportunity["status"][] = ["To Do", "In Progress", "Done", "Snoozed"]
+                            const allStatuses: Opportunity["status"][] = [
+                              "Backlog",
+                              "To Do",
+                              "In Progress",
+                              "Done",
+                              "Canceled",
+                              "Snoozed",
+                            ]
                             const allSelected = allStatuses.every((status) => filters.statuses.includes(status))
                             const someSelected = filters.statuses.length > 0 && !allSelected
                             
@@ -1022,7 +1030,14 @@ export function InventorySubnav() {
                               </div>
                             )
                           })()}
-                          {["To Do", "In Progress", "Done", "Snoozed"].map((status) => (
+                          {[
+                            "Backlog",
+                            "To Do",
+                            "In Progress",
+                            "Done",
+                            "Canceled",
+                            "Snoozed",
+                          ].map((status) => (
                             <div
                               key={status}
                               role="button"
@@ -1141,19 +1156,30 @@ export function InventorySubnav() {
                     ) : null}
                   </div>
                 </div>
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button variant="outline" className="h-10 bg-white px-4">
-                      Export
-                      <ChevronDown className="ml-2 h-4 w-4 text-muted-foreground" />
+                <div className="flex items-center gap-4">
+                  {isOpportunities ? (
+                    <Button
+                      variant="outline"
+                      className="h-10 bg-white"
+                      onClick={() => setOpenSnoozeRules(true)}
+                    >
+                      Manage snooze rules
                     </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end">
-                    <DropdownMenuItem>XLS</DropdownMenuItem>
-                    <DropdownMenuItem>CSV</DropdownMenuItem>
-                    <DropdownMenuItem>PDF</DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
+                  ) : null}
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button variant="outline" className="h-10 bg-white px-4">
+                        Export
+                        <ChevronDown className="ml-2 h-4 w-4 text-muted-foreground" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuItem>XLS</DropdownMenuItem>
+                      <DropdownMenuItem>CSV</DropdownMenuItem>
+                      <DropdownMenuItem>PDF</DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </div>
                 </div>
               </div>
             </div>

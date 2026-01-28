@@ -62,7 +62,8 @@ export function InventoryHeader() {
 
           <VDivider />
 
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-3">
+            <span className="text-sm font-semibold text-foreground">Inventory</span>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button

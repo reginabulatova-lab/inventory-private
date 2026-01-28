@@ -75,7 +75,6 @@ export function OptimizationOpportunitiesSection() {
   const [active, setActive] = React.useState<Active>(null)
   const { dateRange } = useInventoryData()
   const opportunities = useFilteredOpportunities({ includeSnoozed: false })
-  const allOpportunities = useFilteredOpportunities({ includeSnoozed: true })
 
   const kpis = computeHealthRiskKPIs(opportunities, dateRange.from, dateRange.to)
   const mode = getOpportunityMode(kpis.overstockEur, kpis.understockEur)
@@ -84,14 +83,9 @@ export function OptimizationOpportunitiesSection() {
     () => filterOpportunitiesByMode(opportunities, mode),
     [opportunities, mode]
   )
-  const scopedAll = React.useMemo(
-    () => filterOpportunitiesByMode(allOpportunities, mode),
-    [allOpportunities, mode]
-  )
-
   const baseTotal = React.useMemo(
-    () => scopedAll.reduce((sum, opp) => sum + opp.cashImpactEur, 0),
-    [scopedAll]
+    () => scopedOpportunities.reduce((sum, opp) => sum + opp.cashImpactEur, 0),
+    [scopedOpportunities]
   )
 
   const targetTotal = React.useMemo(
@@ -286,7 +280,12 @@ export function OptimizationOpportunitiesSection() {
         onClose={close}
         seeAllHref={seeAllHref}
       >
-        <OpportunitiesTable filter={filter} showToolbar includeSnoozed={false} />
+        <OpportunitiesTable
+          filter={filter}
+          showToolbar
+          showSummary={false}
+          includeSnoozed={false}
+        />
       </BottomSheetModal>
     </section>
   )

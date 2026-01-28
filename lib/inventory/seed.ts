@@ -31,7 +31,7 @@ const PARTS = [
 
 const SUPPLIERS = ["LunaCraft", "Celestial Dynamics", "AeroForge", "NovaComponents", "Orion Industrial"]
 const CUSTOMERS = ["SkyWorks", "BlueJet", "AeroLink", "StellarWings", "Atlas Airframes"]
-const ASSIGNEES = ["A. Martin", "S. Dubois", "C. Leroy", "M. Rossi", "–"]
+const ASSIGNEES = ["A. Martin", "S. Dubois", "C. Leroy", "M. Rossi"]
 const TEAMS = ["Supply", "Production", "Customer Support"]
 const PLANTS = ["1123", "3535", "2041", "8810"]
 const BUYER_CODES = ["AV67", "TY82", "BN29"]
@@ -43,9 +43,11 @@ function pick<T>(r: () => number, arr: T[]): T {
 
 function weightedStatus(r: () => number): OpportunityStatus {
   const x = r()
-  if (x < 0.4) return "To Do"
-  if (x < 0.7) return "In Progress"
-  if (x < 0.92) return "Done"
+  if (x < 0.7) return "Backlog"
+  if (x < 0.82) return "To Do"
+  if (x < 0.9) return "In Progress"
+  if (x < 0.96) return "Done"
+  if (x < 0.99) return "Canceled"
   return "Snoozed"
 }
 
@@ -99,24 +101,19 @@ export function seedOpportunities(plan: Plan, count = 220): Opportunity[] {
     const nearTerm = r() < 0.7
     const dayOffset = nearTerm ? Math.floor(r() * 90) : Math.floor(r() * horizonDays)
     const date = new Date(start.getTime() + dayOffset * 86400000)
+    const deliveryOffsetDays = Math.floor(r() * 18) + 3
+    const deliveryDate =
+      action === "Push Out"
+        ? new Date(date.getTime() - deliveryOffsetDays * 86400000)
+        : date
 
-      // Bigger demo values (so totals look like 5–30M€ depending on timeframe)
-      const base = plan === "ERP" ? 650_000 : 520_000
-      const variability = 0.8 + r() * 3.2 // 0.8x .. 4.0x
-      let cashImpactEur = Math.round(base * variability)
+      // Keep opportunity values in a realistic 5k–150k range
+      const minImpact = 5_000
+      const maxImpact = 150_000
+      let cashImpactEur = Math.round(minImpact + r() * (maxImpact - minImpact))
 
-      // 10% large spikes to make longer horizons visibly bigger
-      if (r() < 0.10) cashImpactEur += Math.round(2_000_000 + r() * 8_000_000) // +2M..+10M
-
-      // keep a floor so nothing is tiny
-      cashImpactEur = Math.max(60_000, cashImpactEur)
-
-
-    // Rare spikes (8%) to create visible impact differences across longer ranges
-    if (r() < 0.08) cashImpactEur += Math.round(300_000 + r() * 900_000) // +300k..+1.2M
-
-    // Optional: clamp to avoid absurd values
-    cashImpactEur = Math.max(5_000, cashImpactEur)
+    const assignee = status === "Backlog" ? "" : pick(r, ASSIGNEES)
+    const team = status === "Backlog" ? "" : pick(r, TEAMS)
 
     out.push({
       id: `${plan.toLowerCase()}_opp_${i + 1}`,
@@ -126,9 +123,10 @@ export function seedOpportunities(plan: Plan, count = 220): Opportunity[] {
       partNumber: part.number,
       suggestedAction: action,
       suggestedDate: toISODate(date),
+      deliveryDate: toISODate(deliveryDate),
       status,
-      assignee: pick(r, ASSIGNEES),
-      team: pick(r, TEAMS),
+      assignee,
+      team,
       supplier,
       customer,
       escLevel,

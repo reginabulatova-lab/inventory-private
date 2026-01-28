@@ -4,10 +4,8 @@ import * as React from "react"
 import { format } from "date-fns"
 import {
   applyOpportunityFilters,
-  buildPartKey,
   useFilteredOpportunities,
   useInventoryData,
-  useOpportunitiesForFilters,
 } from "@/components/inventory/inventory-data-provider"
 import type { Opportunity } from "@/lib/inventory/types"
 import {
@@ -25,9 +23,12 @@ import { Badge } from "@/components/ui/badge"
 import {
   ArrowDown,
   ArrowRight,
+  Check,
   CircleCheckBig,
+  CircleDashed,
   CircleDotDashed,
   Clock,
+  Pencil,
   PauseCircle,
   X,
 } from "lucide-react"
@@ -55,6 +56,8 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { Separator } from "@/components/ui/separator"
+import { Calendar } from "@/components/ui/calendar"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 
 export type OpportunitiesTableFilter =
   | { kind: "type"; category: string }
@@ -63,6 +66,7 @@ export type OpportunitiesTableFilter =
   | null
 
 const TEAM_OPTIONS = ["Supply", "Production", "Customer Support"]
+const EMPTY_OPTION = "__empty__"
 const ACTION_STYLES: Record<
   string,
   { icon?: React.ReactNode; className: string }
@@ -87,6 +91,12 @@ function formatEurCompact(value: number) {
   return `€${Math.round(value)}`
 }
 
+function toISODate(d: Date) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
+    d.getDate()
+  ).padStart(2, "0")}`
+}
+
 function ActionBadge({ action }: { action: string }) {
   const style = ACTION_STYLES[action] ?? {
     className: "bg-muted text-foreground border border-border",
@@ -100,17 +110,21 @@ function ActionBadge({ action }: { action: string }) {
 }
 
 function statusColorClass(status: string) {
+  if (status === "Canceled") return "text-red-600"
   if (status === "In Progress") return "text-blue-600"
   if (status === "Done") return "text-emerald-600"
-  if (status === "Snoozed") return "text-amber-600"
+  if (status === "Snoozed") return "text-[#D4D4D4]"
+  if (status === "Backlog") return "text-slate-400"
   return "text-slate-500"
 }
 
 function statusIcon(status: string) {
   const className = `h-3.5 w-3.5 ${statusColorClass(status)}`
+  if (status === "Canceled") return <X className={className} />
   if (status === "In Progress") return <Clock className={className} />
   if (status === "Done") return <CircleCheckBig className={className} />
   if (status === "Snoozed") return <PauseCircle className={className} />
+  if (status === "Backlog") return <CircleDashed className={className} />
   return <CircleDotDashed className={`${className} fill-current`} />
 }
 
@@ -123,18 +137,34 @@ function StatusLabel({ status }: { status: string }) {
   )
 }
 
+function supplyTypeLabel(value: string) {
+  return value === "PO" ? "Purchase Order" : value === "PR" ? "Purchase Request" : value
+}
+
 export function OpportunitiesTable({
   filter,
   showToolbar = true,
   includeSnoozed = true,
   overrideDateRange,
   overrideStatus,
+  useRawInventoryValue = false,
+  excludeStatuses,
+  disableModeFilter = false,
+  showSummary = true,
+  statusFilter,
+  teamFilter,
 }: {
   filter?: OpportunitiesTableFilter
   showToolbar?: boolean
   includeSnoozed?: boolean
   overrideDateRange?: { from?: Date; to?: Date }
   overrideStatus?: Opportunity["status"]
+  useRawInventoryValue?: boolean
+  excludeStatuses?: Opportunity["status"][]
+  disableModeFilter?: boolean
+  showSummary?: boolean
+  statusFilter?: Opportunity["status"] | null
+  teamFilter?: string | null
 }) {
   const {
     snoozeByIds,
@@ -142,15 +172,13 @@ export function OpportunitiesTable({
     setStatusByIds,
     setAssigneeByIds,
     setTeamByIds,
+    setDeliveryDateByIds,
+    applyPushOutByIds,
     dateRange,
     plan,
     opportunities,
     filters,
-    snoozeRules,
-    addSnoozeRule,
-    removeSnoozeRule,
   } = useInventoryData()
-  const filterOptions = useOpportunitiesForFilters()
   const defaultBase = useFilteredOpportunities({ includeSnoozed: false })
   const defaultRows = useFilteredOpportunities({ includeSnoozed })
 
@@ -169,6 +197,9 @@ export function OpportunitiesTable({
     })
     res = applyOpportunityFilters(res, filters)
     if (overrideStatus) res = res.filter((o) => o.status === overrideStatus)
+    if (excludeStatuses?.length) {
+      res = res.filter((o) => !excludeStatuses.includes(o.status))
+    }
     return res
   }, [
     overrideActive,
@@ -182,20 +213,32 @@ export function OpportunitiesTable({
     includeSnoozed,
     filters,
     defaultRows,
+    excludeStatuses,
   ])
 
+  const filteredSourceRows = React.useMemo(() => {
+    let res = overrideActive ? overrideRows : defaultRows
+    if (excludeStatuses?.length) {
+      res = res.filter((o) => !excludeStatuses.includes(o.status))
+    }
+    return res
+  }, [overrideActive, overrideRows, defaultRows, excludeStatuses])
+
   const baseOpportunities = overrideActive
-    ? overrideRows.filter((o) => o.status !== "Snoozed")
+    ? filteredSourceRows.filter((o) => o.status !== "Snoozed")
     : defaultBase
-  const allRows = overrideActive ? overrideRows : defaultRows
+  const allRows = overrideActive ? filteredSourceRows : defaultRows
 
   const kpis = computeHealthRiskKPIs(baseOpportunities, dateRange.from, dateRange.to)
   const mode = getOpportunityMode(kpis.overstockEur, kpis.understockEur)
   const scopedBase = React.useMemo(
-    () => filterOpportunitiesByMode(baseOpportunities, mode),
-    [baseOpportunities, mode]
+    () => (disableModeFilter ? baseOpportunities : filterOpportunitiesByMode(baseOpportunities, mode)),
+    [baseOpportunities, mode, disableModeFilter]
   )
-  const scopedAll = React.useMemo(() => filterOpportunitiesByMode(allRows, mode), [allRows, mode])
+  const scopedAll = React.useMemo(
+    () => (disableModeFilter ? allRows : filterOpportunitiesByMode(allRows, mode)),
+    [allRows, mode, disableModeFilter]
+  )
   const baseTotal = React.useMemo(
     () => scopedAll.reduce((sum, opp) => sum + opp.cashImpactEur, 0),
     [scopedAll]
@@ -228,30 +271,60 @@ export function OpportunitiesTable({
       const ids = new Set(match?.ids ?? [])
       res = res.filter((o) => ids.has(o.id))
     }
+    if (statusFilter) {
+      res = res.filter((o) => o.status === statusFilter)
+    }
+    if (teamFilter) {
+      res = res.filter((o) => o.team === teamFilter)
+    }
     return res
-  }, [scopedAll, scopedBase, filter])
+  }, [scopedAll, scopedBase, filter, statusFilter, teamFilter])
 
   const rows = filteredRows
   const displayRows = React.useMemo(() => {
     const scaled = rows.map((row) => ({
       ...row,
-      inventoryValueEur: Math.round(row.cashImpactEur * scale),
+      inventoryValueEur: useRawInventoryValue
+        ? row.cashImpactEur
+        : Math.round(row.cashImpactEur * scale),
     }))
-    return scaled.sort((a, b) => b.inventoryValueEur - a.inventoryValueEur)
-  }, [rows, scale])
+    return scaled.sort((a, b) => {
+      const byValue = b.inventoryValueEur - a.inventoryValueEur
+      if (byValue !== 0) return byValue
+      const aTime = Number.isFinite(new Date(a.suggestedDate).getTime())
+        ? new Date(a.suggestedDate).getTime()
+        : Infinity
+      const bTime = Number.isFinite(new Date(b.suggestedDate).getTime())
+        ? new Date(b.suggestedDate).getTime()
+        : Infinity
+      return aTime - bTime
+    })
+  }, [rows, scale, useRawInventoryValue])
 
   const assigneeOptions = React.useMemo(() => {
-    const values = Array.from(new Set(allRows.map((r) => r.assignee).filter(Boolean)))
+    const values = Array.from(
+      new Set(
+        allRows
+          .map((r) => r.assignee)
+          .filter((value) => value && value !== "—" && value !== "–")
+      )
+    )
     values.sort((a, b) => a.localeCompare(b))
-    return values.length > 0 ? values : ["–"]
+    return [EMPTY_OPTION, ...values]
   }, [allRows])
+
+  const teamOptions = React.useMemo(() => [EMPTY_OPTION, ...TEAM_OPTIONS], [])
 
   const [selected, setSelected] = React.useState<Record<string, boolean>>({})
   const [openSnooze, setOpenSnooze] = React.useState(false)
   const [openUnsnooze, setOpenUnsnooze] = React.useState(false)
-  const [openRules, setOpenRules] = React.useState(false)
-  const [selectedCustomers, setSelectedCustomers] = React.useState<string[]>([])
-  const [selectedParts, setSelectedParts] = React.useState<string[]>([])
+  const [openStatus, setOpenStatus] = React.useState(false)
+  const [bulkStatus, setBulkStatus] = React.useState<Opportunity["status"]>("Backlog")
+  const [openPanel, setOpenPanel] = React.useState(false)
+  const [panelRow, setPanelRow] = React.useState<Opportunity | null>(null)
+  const [openDeliveryId, setOpenDeliveryId] = React.useState<string | null>(null)
+  const [deliveryDraft, setDeliveryDraft] = React.useState<Date | undefined>(undefined)
+  const [snackbarOpen, setSnackbarOpen] = React.useState(false)
 
   const selectedIds = React.useMemo(
     () => Object.entries(selected).filter(([, v]) => v).map(([k]) => k),
@@ -262,12 +335,22 @@ export function OpportunitiesTable({
   const selectedRows = rows.filter((r) => selectedIds.includes(r.id))
   const selectedSnoozedCount = selectedRows.filter((r) => r.status === "Snoozed").length
   const selectedActiveCount = selectedRows.length - selectedSnoozedCount
+  const selectedPushOutIds = selectedRows
+    .filter((r) => r.suggestedAction === "Push Out")
+    .map((r) => r.id)
+
+  const showPushOutSnackbar = React.useCallback(() => {
+    setSnackbarOpen(true)
+    window.setTimeout(() => setSnackbarOpen(false), 3500)
+  }, [])
 
   const statusSummary = React.useMemo(() => {
     const summary = {
+      Backlog: { count: 0, total: 0 },
       "To Do": { count: 0, total: 0 },
       "In Progress": { count: 0, total: 0 },
       Done: { count: 0, total: 0 },
+      Canceled: { count: 0, total: 0 },
       Snoozed: { count: 0, total: 0 },
     } as Record<string, { count: number; total: number }>
 
@@ -304,16 +387,24 @@ export function OpportunitiesTable({
     setOpenUnsnooze(false)
   }
 
+  const applyPushOutSelected = () => {
+    applyPushOutByIds(selectedPushOutIds)
+    setSelected({})
+    showPushOutSnackbar()
+  }
+
   const allChecked = rows.length > 0 && selectedCount === rows.length
   const indeterminate = selectedCount > 0 && selectedCount < rows.length
 
   return (
     <div className="space-y-3">
-      {showToolbar ? (
+      {showToolbar && showSummary ? (
         <div className="rounded-xl border bg-background p-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex flex-wrap items-center gap-3 text-sm">
-              {(["To Do", "In Progress", "Done", "Snoozed"] as const).map((status, idx) => (
+              {(
+                ["Backlog", "To Do", "In Progress", "Done", "Canceled", "Snoozed"] as const
+              ).map((status, idx) => (
                 <React.Fragment key={status}>
                   {idx > 0 ? <Separator orientation="vertical" className="h-5" /> : null}
                   <div className="flex items-center gap-2">
@@ -333,9 +424,6 @@ export function OpportunitiesTable({
                 </span>
               </div>
             </div>
-            <Button variant="secondary" className="h-9" onClick={() => setOpenRules(true)}>
-              Manage snooze rules
-            </Button>
           </div>
         </div>
       ) : null}
@@ -349,6 +437,17 @@ export function OpportunitiesTable({
           </div>
 
           <div className="flex items-center gap-2">
+            <Button variant="secondary" className="h-9" onClick={() => setOpenStatus(true)}>
+              Set status
+            </Button>
+            <Button
+              variant="secondary"
+              className="h-9"
+              onClick={applyPushOutSelected}
+              disabled={selectedPushOutIds.length === 0}
+            >
+              Apply push out
+            </Button>
             {selectedActiveCount > 0 && (
               <Button variant="secondary" className="h-9" onClick={() => setOpenSnooze(true)}>
                 Snooze
@@ -375,7 +474,13 @@ export function OpportunitiesTable({
                 />
               </TableHead>
               <TableHead>Opportunity type</TableHead>
-              <TableHead>Suggested Date</TableHead>
+              <TableHead>
+                <div className="flex items-center gap-1">
+                  Suggested Date
+                  <ArrowDown className="h-3.5 w-3.5 text-muted-foreground" />
+                </div>
+              </TableHead>
+              <TableHead>Delivery date</TableHead>
               <TableHead>
                 <div className="flex items-center gap-1">
                   Inventory value
@@ -406,13 +511,72 @@ export function OpportunitiesTable({
                     aria-label={`Select ${r.orderNumber}`}
                   />
                 </TableCell>
-                <TableCell>
-                  <ActionBadge action={r.suggestedAction} />
-                </TableCell>
+                <TableCell className="font-medium">{r.suggestedAction}</TableCell>
                 <TableCell>
                   {r.suggestedAction === "Cancel" || !r.suggestedDate
                     ? ""
                     : format(new Date(r.suggestedDate), "MMM d, yyyy")}
+                </TableCell>
+                <TableCell>
+                  <Popover
+                    open={openDeliveryId === r.id}
+                    onOpenChange={(open) => {
+                      if (open) {
+                        const baseDate = r.deliveryDate || r.suggestedDate
+                        const parsed = new Date(baseDate)
+                        setDeliveryDraft(Number.isFinite(parsed.getTime()) ? parsed : undefined)
+                        setOpenDeliveryId(r.id)
+                      } else {
+                        setOpenDeliveryId(null)
+                      }
+                    }}
+                  >
+                    <PopoverTrigger asChild>
+                      <button
+                        type="button"
+                        className="inline-flex w-full items-center gap-2 rounded-md px-2 py-1 text-left text-sm hover:bg-muted/40"
+                        aria-label="Edit delivery date"
+                      >
+                        <span>
+                          {!r.deliveryDate
+                            ? "—"
+                            : format(new Date(r.deliveryDate), "MMM d, yyyy")}
+                        </span>
+                        <Pencil className="h-3.5 w-3.5 text-[#B8B8B8]" />
+                      </button>
+                    </PopoverTrigger>
+                    <PopoverContent align="start" className="w-auto p-3">
+                      <div className="space-y-3">
+                        <Calendar
+                          mode="single"
+                          selected={deliveryDraft}
+                          onSelect={(date) => {
+                            if (!date) return
+                            setDeliveryDraft(date)
+                            setDeliveryDateByIds([r.id], toISODate(date))
+                          }}
+                          disabled={(date) => {
+                            if (r.suggestedAction !== "Push Out") return false
+                            const suggested = new Date(r.suggestedDate)
+                            if (!Number.isFinite(suggested.getTime())) return false
+                            return date > suggested
+                          }}
+                        />
+                        {r.suggestedAction === "Push Out" ? (
+                          <Button
+                            className="h-8"
+                            onClick={() => {
+                              applyPushOutByIds([r.id])
+                              setOpenDeliveryId(null)
+                              showPushOutSnackbar()
+                            }}
+                          >
+                            Apply push out
+                          </Button>
+                        ) : null}
+                      </div>
+                    </PopoverContent>
+                  </Popover>
                 </TableCell>
                 <TableCell>{formatEurCompact(r.inventoryValueEur)}</TableCell>
                 <TableCell>
@@ -422,10 +586,13 @@ export function OpportunitiesTable({
                       setStatusByIds([r.id], value as any)
                     }
                   >
-                    <SelectTrigger className="h-8 w-[150px] border-0 bg-transparent px-2 shadow-none hover:bg-muted/40 data-[state=open]:bg-muted/60">
+                    <SelectTrigger className="h-8 w-[150px] rounded-full border bg-muted/40 px-2 text-xs font-semibold shadow-none hover:bg-muted/60 data-[state=open]:bg-muted/70">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent align="start">
+                      <SelectItem value="Backlog">
+                        <StatusLabel status="Backlog" />
+                      </SelectItem>
                       <SelectItem value="To Do">
                         <StatusLabel status="To Do" />
                       </SelectItem>
@@ -435,6 +602,9 @@ export function OpportunitiesTable({
                       <SelectItem value="Done">
                         <StatusLabel status="Done" />
                       </SelectItem>
+                      <SelectItem value="Canceled">
+                        <StatusLabel status="Canceled" />
+                      </SelectItem>
                       <SelectItem value="Snoozed">
                         <StatusLabel status="Snoozed" />
                       </SelectItem>
@@ -443,16 +613,18 @@ export function OpportunitiesTable({
                 </TableCell>
                 <TableCell>
                   <Select
-                    value={r.team}
-                    onValueChange={(value) => setTeamByIds([r.id], value)}
+                    value={r.team || EMPTY_OPTION}
+                    onValueChange={(value) =>
+                      setTeamByIds([r.id], value === EMPTY_OPTION ? "" : value)
+                    }
                   >
                     <SelectTrigger className="h-8 w-[180px] border-0 bg-transparent px-2 text-sm shadow-none hover:bg-muted/40 data-[state=open]:bg-muted/60">
-                      <SelectValue />
+                      <SelectValue placeholder="—" />
                     </SelectTrigger>
                     <SelectContent align="start">
-                      {TEAM_OPTIONS.map((team) => (
+                      {teamOptions.map((team) => (
                         <SelectItem key={team} value={team}>
-                          {team}
+                          {team === EMPTY_OPTION ? "—" : team}
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -460,24 +632,59 @@ export function OpportunitiesTable({
                 </TableCell>
                 <TableCell>
                   <Select
-                    value={r.assignee}
-                    onValueChange={(value) => setAssigneeByIds([r.id], value)}
+                    value={r.assignee || EMPTY_OPTION}
+                    onValueChange={(value) =>
+                      setAssigneeByIds([r.id], value === EMPTY_OPTION ? "" : value)
+                    }
                   >
                     <SelectTrigger className="h-8 w-[160px] border-0 bg-transparent px-2 text-sm shadow-none hover:bg-muted/40 data-[state=open]:bg-muted/60">
-                      <SelectValue />
+                      <SelectValue placeholder="—" />
                     </SelectTrigger>
                     <SelectContent align="start">
                       {assigneeOptions.map((assignee) => (
                         <SelectItem key={assignee} value={assignee}>
-                          {assignee}
+                          {assignee === EMPTY_OPTION ? "—" : assignee}
                         </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
                 </TableCell>
-                <TableCell className="font-medium">{r.orderNumber}</TableCell>
-                <TableCell>{r.partName}</TableCell>
-                <TableCell>{r.partNumber}</TableCell>
+                <TableCell>
+                  <button
+                    type="button"
+                    className="font-medium text-blue-700 hover:text-blue-900"
+                    onClick={() => {
+                      setPanelRow(r)
+                      setOpenPanel(true)
+                    }}
+                  >
+                    {r.orderNumber}
+                  </button>
+                </TableCell>
+                <TableCell>
+                  <button
+                    type="button"
+                    className="font-medium text-blue-700 hover:text-blue-900"
+                    onClick={() => {
+                      setPanelRow(r)
+                      setOpenPanel(true)
+                    }}
+                  >
+                    {r.partName}
+                  </button>
+                </TableCell>
+                <TableCell>
+                  <button
+                    type="button"
+                    className="font-medium text-blue-700 hover:text-blue-900"
+                    onClick={() => {
+                      setPanelRow(r)
+                      setOpenPanel(true)
+                    }}
+                  >
+                    {r.partNumber}
+                  </button>
+                </TableCell>
                 <TableCell>{r.plant}</TableCell>
                 <TableCell>{r.buyerCode}</TableCell>
                 <TableCell>{r.mrpCode}</TableCell>
@@ -485,7 +692,128 @@ export function OpportunitiesTable({
             ))}
           </TableBody>
         </Table>
+
+        {openPanel && panelRow ? (
+          <>
+            <div
+              className="fixed inset-0 z-40 bg-black/10"
+              onClick={() => setOpenPanel(false)}
+            />
+            <aside className="fixed right-0 top-0 bottom-0 z-50 w-[420px] max-w-full bg-white shadow-xl">
+              <div className="flex items-start justify-between gap-4 border-b px-5 py-4">
+                <div className="space-y-1">
+                  <div className="text-sm text-muted-foreground">Opportunity</div>
+                  <div className="text-lg font-semibold text-foreground">
+                    {panelRow.orderNumber} • {supplyTypeLabel(panelRow.supplyType)}
+                  </div>
+                  <div className="text-sm text-muted-foreground">
+                    {panelRow.partNumber} — {panelRow.partName}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className="rounded-md p-2 text-muted-foreground hover:bg-muted"
+                  onClick={() => setOpenPanel(false)}
+                  aria-label="Close panel"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+
+              <div className="h-full overflow-y-auto px-5 py-4">
+                <div className="space-y-4">
+                  <div>
+                    <div className="text-xs font-semibold text-muted-foreground">Details</div>
+                    <div className="mt-2 grid grid-cols-2 gap-3 text-sm">
+                      <div>
+                        <div className="text-muted-foreground">Status</div>
+                        <div className="text-foreground">{panelRow.status}</div>
+                      </div>
+                      <div>
+                        <div className="text-muted-foreground">Opportunity type</div>
+                        <div className="text-foreground">{panelRow.suggestedAction}</div>
+                      </div>
+                      <div>
+                        <div className="text-muted-foreground">Suggested date</div>
+                        <div className="text-foreground">
+                          {panelRow.suggestedAction === "Cancel" || !panelRow.suggestedDate
+                            ? "—"
+                            : format(new Date(panelRow.suggestedDate), "MMM d, yyyy")}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-muted-foreground">Inventory value</div>
+                        <div className="text-foreground">
+                          {formatEurCompact(
+                            useRawInventoryValue
+                              ? panelRow.cashImpactEur
+                              : Math.round(panelRow.cashImpactEur * scale)
+                          )}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-muted-foreground">Assignee</div>
+                        <div className="text-foreground">{panelRow.assignee || "—"}</div>
+                      </div>
+                      <div>
+                        <div className="text-muted-foreground">Team</div>
+                        <div className="text-foreground">{panelRow.team || "—"}</div>
+                      </div>
+                      <div>
+                        <div className="text-muted-foreground">Plant</div>
+                        <div className="text-foreground">{panelRow.plant}</div>
+                      </div>
+                      <div>
+                        <div className="text-muted-foreground">Buyer code</div>
+                        <div className="text-foreground">{panelRow.buyerCode}</div>
+                      </div>
+                      <div>
+                        <div className="text-muted-foreground">MRP code</div>
+                        <div className="text-foreground">{panelRow.mrpCode}</div>
+                      </div>
+                      <div>
+                        <div className="text-muted-foreground">Supplier</div>
+                        <div className="text-foreground">{panelRow.supplier}</div>
+                      </div>
+                      <div>
+                        <div className="text-muted-foreground">Customer</div>
+                        <div className="text-foreground">{panelRow.customer}</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="text-xs font-semibold text-muted-foreground">Comments</div>
+                    <div className="mt-2 space-y-3">
+                      <div className="rounded-md border bg-background p-3 text-sm">
+                        <div className="font-medium text-foreground">A. Martin</div>
+                        <div className="text-muted-foreground">
+                          Reviewing supplier dates and awaiting confirmation.
+                        </div>
+                      </div>
+                      <div className="rounded-md border bg-background p-3 text-sm">
+                        <div className="font-medium text-foreground">S. Dubois</div>
+                        <div className="text-muted-foreground">
+                          Planned update for next week based on MRP refresh.
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </aside>
+          </>
+        ) : null}
       </div>
+
+      {snackbarOpen ? (
+        <div className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-full border bg-white px-4 py-2 text-sm text-foreground shadow-lg">
+          <span className="inline-flex items-center gap-2">
+            <Check className="h-4 w-4 text-emerald-600" />
+            Date updated successfully! The ticket is now marked as Done.
+          </span>
+        </div>
+      ) : null}
 
       {/* Snooze modal */}
       <Dialog open={openSnooze} onOpenChange={setOpenSnooze}>
@@ -525,122 +853,47 @@ export function OpportunitiesTable({
         </DialogContent>
       </Dialog>
 
-      <Dialog open={openRules} onOpenChange={setOpenRules}>
+
+      <Dialog open={openStatus} onOpenChange={setOpenStatus}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Snooze rules</DialogTitle>
+            <DialogTitle>Set status</DialogTitle>
             <DialogDescription>
-              Create rules to auto‑snooze opportunities by customer or part.
+              Apply a new status to the selected opportunities.
             </DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-4">
-            <div>
-              <div className="text-sm font-medium text-foreground">Customer</div>
-              <div className="mt-2 max-h-40 overflow-y-auto rounded-md border">
-                {Array.from(new Set(filterOptions.map((o) => o.customer)))
-                  .filter(Boolean)
-                  .sort()
-                  .map((customer) => (
-                    <div
-                      key={customer}
-                      role="button"
-                      tabIndex={0}
-                      onClick={() =>
-                        setSelectedCustomers((prev) =>
-                          prev.includes(customer)
-                            ? prev.filter((c) => c !== customer)
-                            : [...prev, customer]
-                        )
-                      }
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" || e.key === " ") {
-                          e.preventDefault()
-                          setSelectedCustomers((prev) =>
-                            prev.includes(customer)
-                              ? prev.filter((c) => c !== customer)
-                              : [...prev, customer]
-                          )
-                        }
-                      }}
-                      className="flex items-center gap-2 px-3 py-2 text-sm hover:bg-accent"
-                    >
-                      <Checkbox checked={selectedCustomers.includes(customer)} />
-                      <span>{customer}</span>
-                    </div>
-                  ))}
-              </div>
-            </div>
-
-            <div>
-              <div className="text-sm font-medium text-foreground">Part</div>
-              <div className="mt-2 max-h-40 overflow-y-auto rounded-md border">
-                {Array.from(new Set(filterOptions.map((o) => buildPartKey(o))))
-                  .filter(Boolean)
-                  .sort()
-                  .map((part) => (
-                    <div
-                      key={part}
-                      role="button"
-                      tabIndex={0}
-                      onClick={() =>
-                        setSelectedParts((prev) =>
-                          prev.includes(part) ? prev.filter((p) => p !== part) : [...prev, part]
-                        )
-                      }
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" || e.key === " ") {
-                          e.preventDefault()
-                          setSelectedParts((prev) =>
-                            prev.includes(part) ? prev.filter((p) => p !== part) : [...prev, part]
-                          )
-                        }
-                      }}
-                      className="flex items-center gap-2 px-3 py-2 text-sm hover:bg-accent"
-                    >
-                      <Checkbox checked={selectedParts.includes(part)} />
-                      <span>{part}</span>
-                    </div>
-                  ))}
-              </div>
-            </div>
-
-            {snoozeRules.length > 0 && (
-              <div className="space-y-2">
-                {snoozeRules.map((rule) => (
-                  <div
-                    key={rule.id}
-                    className="flex items-center justify-between rounded-md border px-3 py-2 text-sm"
-                  >
-                    <div className="text-foreground">
-                      Snooze if {rule.kind === "customer" ? "Customer" : "Part"} is{" "}
-                      <span className="font-medium">{rule.value}</span>
-                    </div>
-                    <Button variant="ghost" size="sm" onClick={() => removeSnoozeRule(rule.id)}>
-                      Remove
-                    </Button>
-                  </div>
-                ))}
-              </div>
-            )}
+          <div className="mt-2">
+            <Select
+              value={bulkStatus}
+              onValueChange={(value) => setBulkStatus(value as Opportunity["status"])}
+            >
+              <SelectTrigger className="h-9">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent align="start">
+                <SelectItem value="Backlog">Backlog</SelectItem>
+                <SelectItem value="To Do">To Do</SelectItem>
+                <SelectItem value="In Progress">In Progress</SelectItem>
+                <SelectItem value="Done">Done</SelectItem>
+                <SelectItem value="Canceled">Canceled</SelectItem>
+                <SelectItem value="Snoozed">Snoozed</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
 
           <DialogFooter className="gap-2 sm:gap-0">
-            <Button variant="ghost" onClick={() => setOpenRules(false)}>
-              Close
+            <Button variant="ghost" onClick={() => setOpenStatus(false)}>
+              Cancel
             </Button>
             <Button
               onClick={() => {
-                selectedCustomers.forEach((customer) =>
-                  addSnoozeRule({ kind: "customer", value: customer })
-                )
-                selectedParts.forEach((part) => addSnoozeRule({ kind: "part", value: part }))
-                setSelectedCustomers([])
-                setSelectedParts([])
-                setOpenRules(false)
+                setStatusByIds(selectedIds, bulkStatus)
+                setSelected({})
+                setOpenStatus(false)
               }}
             >
-              Add rules
+              Apply status
             </Button>
           </DialogFooter>
         </DialogContent>

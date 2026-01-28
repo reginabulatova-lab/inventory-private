@@ -1,6 +1,12 @@
 export type Plan = "ERP" | "ALT"
 
-export type OpportunityStatus = "To Do" | "In Progress" | "Done" | "Snoozed"
+export type OpportunityStatus =
+  | "Backlog"
+  | "To Do"
+  | "In Progress"
+  | "Done"
+  | "Canceled"
+  | "Snoozed"
 export type SuggestedAction = "Pull in" | "Cancel" | "Push Out"
 
 /**
@@ -17,6 +23,7 @@ export type Opportunity = {
   partNumber: string
   suggestedAction: SuggestedAction
   suggestedDate: string // ISO date (YYYY-MM-DD)
+  deliveryDate: string // ISO date (YYYY-MM-DD)
   status: OpportunityStatus
   assignee: string
   team: string

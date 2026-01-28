@@ -32,6 +32,63 @@ export type SnoozeRule = {
 const FALLBACK_BUYER_CODES = ["AV67", "TY82", "BN29"]
 const FALLBACK_MRP_CODES = ["XJ45", "WM22", "QR98", "ZL16"]
 const FALLBACK_TEAMS = ["Supply", "Production", "Customer Support"]
+const MRP_ASSIGNMENTS: Record<
+  string,
+  { assignee: Opportunity["assignee"]; team: Opportunity["team"] }
+> = {
+  XJ45: { assignee: "A. Martin", team: "Supply" },
+  WM22: { assignee: "S. Dubois", team: "Production" },
+  QR98: { assignee: "C. Leroy", team: "Customer Support" },
+  ZL16: { assignee: "M. Rossi", team: "Supply" },
+}
+const ASSIGNEE_TEAMS: Record<Opportunity["assignee"], Opportunity["team"]> = {
+  "A. Martin": "Supply",
+  "S. Dubois": "Production",
+  "C. Leroy": "Customer Support",
+  "M. Rossi": "Supply",
+}
+const IMPACT_MIN = 5_000
+const IMPACT_MAX = 150_000
+
+function normalizeAssignee(value?: string) {
+  if (!value) return ""
+  if (value === "—" || value === "–") return ""
+  return value
+}
+
+function clampImpact(value: number) {
+  if (!Number.isFinite(value)) return IMPACT_MIN
+  return Math.min(IMPACT_MAX, Math.max(IMPACT_MIN, value))
+}
+
+function fallbackDeliveryDate(action: Opportunity["suggestedAction"], suggestedDate: string) {
+  const suggested = new Date(suggestedDate)
+  if (!Number.isFinite(suggested.getTime())) return suggestedDate
+  if (action !== "Push Out") return suggestedDate
+  const prior = new Date(suggested)
+  prior.setDate(prior.getDate() - 7)
+  return `${prior.getFullYear()}-${String(prior.getMonth() + 1).padStart(2, "0")}-${String(
+    prior.getDate()
+  ).padStart(2, "0")}`
+}
+
+function normalizeDeliveryDate(o: Opportunity) {
+  if (!o.deliveryDate) return fallbackDeliveryDate(o.suggestedAction, o.suggestedDate)
+  if (o.suggestedAction !== "Push Out") return o.deliveryDate
+  const delivery = new Date(o.deliveryDate).getTime()
+  const suggested = new Date(o.suggestedDate).getTime()
+  if (!Number.isFinite(delivery) || !Number.isFinite(suggested)) {
+    return fallbackDeliveryDate(o.suggestedAction, o.suggestedDate)
+  }
+  if (delivery >= suggested) {
+    return fallbackDeliveryDate(o.suggestedAction, o.suggestedDate)
+  }
+  return o.deliveryDate
+}
+
+function autoAssignByMrp(o: Opportunity) {
+  return MRP_ASSIGNMENTS[o.mrpCode] ?? MRP_ASSIGNMENTS[FALLBACK_MRP_CODES[0]]
+}
 
 function pickFallback(list: string[], key: string) {
   if (list.length === 0) return ""
@@ -124,6 +181,8 @@ type InventoryDataContextValue = {
   setStatusByIds: (ids: string[], status: Opportunity["status"]) => void
   setAssigneeByIds: (ids: string[], assignee: Opportunity["assignee"]) => void
   setTeamByIds: (ids: string[], team: Opportunity["team"]) => void
+  setDeliveryDateByIds: (ids: string[], deliveryDate: Opportunity["deliveryDate"]) => void
+  applyPushOutByIds: (ids: string[]) => void
 
   /**
    * Expose a stable "now" so other computations can be consistent too if needed.
@@ -199,6 +258,7 @@ export function InventoryDataProvider({ children }: { children: React.ReactNode 
           ...o,
           customer: o.customer ?? o.supplier ?? "—",
           escLevel: o.escLevel ?? 1,
+          cashImpactEur: clampImpact(o.cashImpactEur ?? IMPACT_MIN),
           buyerCode:
             o.buyerCode && FALLBACK_BUYER_CODES.includes(o.buyerCode)
               ? o.buyerCode
@@ -207,7 +267,9 @@ export function InventoryDataProvider({ children }: { children: React.ReactNode 
             o.mrpCode && FALLBACK_MRP_CODES.includes(o.mrpCode)
               ? o.mrpCode
               : pickFallback(FALLBACK_MRP_CODES, o.id),
-          team: o.team ?? pickFallback(FALLBACK_TEAMS, o.id),
+          assignee: normalizeAssignee(o.assignee),
+          team: o.team ?? "",
+          deliveryDate: normalizeDeliveryDate(o),
           snoozeRuleIds: o.snoozeRuleIds ?? [],
           prevStatus: o.prevStatus,
         }))
@@ -249,7 +311,16 @@ export function InventoryDataProvider({ children }: { children: React.ReactNode 
   const updateStatusByIds = React.useCallback((ids: string[], status: Opportunity["status"]) => {
     if (ids.length === 0) return
     setOpportunities((prev) =>
-      prev.map((o) => (ids.includes(o.id) ? { ...o, status } : o))
+      prev.map((o) => {
+        if (!ids.includes(o.id)) return o
+        if (status === "To Do") {
+          const assignment = autoAssignByMrp(o)
+          const nextAssignee = o.assignee || assignment.assignee
+          const nextTeam = o.team || ASSIGNEE_TEAMS[nextAssignee] || assignment.team
+          return { ...o, status, assignee: nextAssignee, team: nextTeam }
+        }
+        return { ...o, status }
+      })
     )
   }, [])
 
@@ -278,9 +349,21 @@ export function InventoryDataProvider({ children }: { children: React.ReactNode 
         prev.map((o) => {
           if (!ids.includes(o.id)) return o
           if (o.status !== "Snoozed") return o
+          const nextStatus = o.prevStatus ?? "To Do"
+          if (nextStatus === "To Do") {
+            const assignment = autoAssignByMrp(o)
+            return {
+              ...o,
+              status: nextStatus,
+              assignee: o.assignee || assignment.assignee,
+              team: o.team || assignment.team,
+              prevStatus: undefined,
+              snoozeRuleIds: [],
+            }
+          }
           return {
             ...o,
-            status: o.prevStatus ?? "To Do",
+            status: nextStatus,
             prevStatus: undefined,
             snoozeRuleIds: [],
           }
@@ -303,6 +386,19 @@ export function InventoryDataProvider({ children }: { children: React.ReactNode 
             prevStatus: o.status,
           }
         }
+        if (status === "To Do") {
+          const assignment = autoAssignByMrp(o)
+          const nextAssignee = o.assignee || assignment.assignee
+          const nextTeam = o.team || ASSIGNEE_TEAMS[nextAssignee] || assignment.team
+          return {
+            ...o,
+            status,
+            assignee: nextAssignee,
+            team: nextTeam,
+            prevStatus: undefined,
+            snoozeRuleIds: [],
+          }
+        }
         return {
           ...o,
           status,
@@ -321,6 +417,33 @@ export function InventoryDataProvider({ children }: { children: React.ReactNode 
   const setTeamByIds = React.useCallback((ids: string[], team: Opportunity["team"]) => {
     if (ids.length === 0) return
     setOpportunities((prev) => prev.map((o) => (ids.includes(o.id) ? { ...o, team } : o)))
+  }, [])
+
+  const setDeliveryDateByIds = React.useCallback(
+    (ids: string[], deliveryDate: Opportunity["deliveryDate"]) => {
+      if (ids.length === 0) return
+      setOpportunities((prev) =>
+        prev.map((o) => (ids.includes(o.id) ? { ...o, deliveryDate } : o))
+      )
+    },
+    []
+  )
+
+  const applyPushOutByIds = React.useCallback((ids: string[]) => {
+    if (ids.length === 0) return
+    setOpportunities((prev) =>
+      prev.map((o) => {
+        if (!ids.includes(o.id)) return o
+        if (o.suggestedAction !== "Push Out") return o
+        return {
+          ...o,
+          deliveryDate: o.suggestedDate,
+          status: "Done",
+          prevStatus: undefined,
+          snoozeRuleIds: [],
+        }
+      })
+    )
   }, [])
 
   const applyRule = React.useCallback((rule: SnoozeRule, rows: Opportunity[]) => {
@@ -388,6 +511,8 @@ export function InventoryDataProvider({ children }: { children: React.ReactNode 
       setStatusByIds,
       setAssigneeByIds,
       setTeamByIds,
+      setDeliveryDateByIds,
+      applyPushOutByIds,
       now,
       filters,
       setFilters,
@@ -417,6 +542,8 @@ export function InventoryDataProvider({ children }: { children: React.ReactNode 
       setStatusByIds,
       setAssigneeByIds,
       setTeamByIds,
+      setDeliveryDateByIds,
+      applyPushOutByIds,
       now,
       filters,
       snoozeRules,
