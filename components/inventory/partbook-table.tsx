@@ -1,9 +1,21 @@
 "use client"
 
 import * as React from "react"
+import { format } from "date-fns"
 import { cn } from "@/lib/utils"
-import { ChevronDown, ChevronRight, Lightbulb, MoreHorizontal } from "lucide-react"
+import {
+  ChevronDown,
+  ChevronRight,
+  Files,
+  Lightbulb,
+  MoreHorizontal,
+  X,
+} from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
+import { Badge } from "@/components/ui/badge"
+import { useInventoryData } from "@/components/inventory/inventory-data-provider"
+import type { Opportunity } from "@/lib/inventory/types"
 import {
     TOP_10_PROGRAMS,
     OTHER_PROGRAMS,
@@ -36,6 +48,7 @@ type PartRow = {
   escalationTicket: string
   partName: string
   partNumber: string
+  inventoryValueEur: number
   hasOpportunities: boolean
   program: string
   plant: string
@@ -46,6 +59,11 @@ type PartRow = {
   lines: LineMap
 }
 
+type PartSource = {
+  partName: string
+  partNumber: string
+}
+
 type LineKey =
   | "needs.customerOrders"
   | "needs.workOrders"
@@ -53,6 +71,16 @@ type LineKey =
   | "resources.workOrders"
 
 type LineMap = Record<LineKey, HeatCell[]>
+
+type Ticket = {
+  id: string
+  level: 1 | 2 | 3 | 4
+  createdAt: Date
+  team: string
+  partName: string
+  partNumber: string
+  description: string
+}
 
 function addCells(a: HeatCell[], b: HeatCell[]): HeatCell[] {
   return a.map((cell, i) => ({
@@ -84,6 +112,17 @@ function statusFromValue(v: number): HeatStatus {
   if (v < 0) return "red"
   if (v === 0) return "yellow"
   return "green"
+}
+
+function formatEurCompact(value: number) {
+  const abs = Math.abs(value)
+  if (abs >= 1_000_000) return `€${(value / 1_000_000).toFixed(1)}M`
+  if (abs >= 1_000) return `€${(value / 1_000).toFixed(0)}K`
+  return `€${Math.round(value)}`
+}
+
+function supplyTypeLabel(value: string) {
+  return value === "PO" ? "Purchase Order" : value === "PR" ? "Purchase Request" : value
 }
 
 function deriveStatus(cells: HeatCell[]): HeatCell[] {
@@ -135,13 +174,15 @@ function makeWeeks(): HeatCell[] {
   return weeks
 }
 
-function buildMockParts(): PartRow[] {
+function buildMockParts(parts: PartSource[]): PartRow[] {
     const topProgramsNoOther = TOP_10_PROGRAMS.filter((p) => p !== "Other")
     const allPrograms = [...topProgramsNoOther, ...OTHER_PROGRAMS]
+    const fallbackParts = parts.length > 0 ? parts : [{ partName: "Part name 1", partNumber: "PN-1000" }]
   
     return Array.from({ length: 10 }).map((_, i) => {
       const program = allPrograms[i % allPrograms.length]
       const stockStatus = STOCK_STATUS_CATEGORIES[i % STOCK_STATUS_CATEGORIES.length]
+      const part = fallbackParts[i % fallbackParts.length]
 
       const base = makeWeeks()
 
@@ -158,11 +199,14 @@ function buildMockParts(): PartRow[] {
             "resources.workOrders": mkLine(i + 4),
         }
   
+      const inventoryValueEur = 5_000 + ((i + 1) * 13_579) % 145_000
+
       return {
         id: `p${i + 1}`,
         escalationTicket: `T-${(i % 4) + 1}`,
-        partName: `Part name ${i + 1}`,
-        partNumber: `PN-${1000 + i}`,
+        partName: part.partName,
+        partNumber: part.partNumber,
+        inventoryValueEur,
         hasOpportunities: i % 2 === 0,
         program,
         plant: i % 2 === 0 ? "1123" : "1130",
@@ -215,9 +259,103 @@ function applyFilter(rows: PartRow[], filter: FilterContext): PartRow[] {
     return rows.slice(0, 10)
   }   
 
-export function PartbookTable({ filter }: { filter: FilterContext }) {
-  const all = React.useMemo(() => buildMockParts(), [])
-  const rows = React.useMemo(() => applyFilter(all, filter), [all, filter])
+export function PartbookTable({
+  filter,
+  fullHeight = false,
+}: {
+  filter: FilterContext
+  fullHeight?: boolean
+}) {
+  const { opportunities, plan } = useInventoryData()
+  const [openPanel, setOpenPanel] = React.useState(false)
+  const [panelRow, setPanelRow] = React.useState<Opportunity | null>(null)
+  const [openTicketPanel, setOpenTicketPanel] = React.useState(false)
+  const [activeTicket, setActiveTicket] = React.useState<Ticket | null>(null)
+  const [tickets, setTickets] = React.useState<Record<string, Ticket>>({})
+  const [selected, setSelected] = React.useState<Record<string, boolean>>({})
+
+  const partSources = React.useMemo<PartSource[]>(() => {
+    const map = new Map<string, PartSource>()
+    opportunities
+      .filter((o) => o.plan === plan)
+      .forEach((o) => {
+        if (!map.has(o.partNumber)) {
+          map.set(o.partNumber, { partName: o.partName, partNumber: o.partNumber })
+        }
+      })
+    return Array.from(map.values())
+  }, [opportunities, plan])
+
+  const opportunityByPart = React.useMemo(() => {
+    const map = new Map<string, Opportunity>()
+    opportunities
+      .filter((o) => o.plan === plan)
+      .forEach((o) => {
+        if (!map.has(o.partNumber)) map.set(o.partNumber, o)
+      })
+    return map
+  }, [opportunities, plan])
+
+  const all = React.useMemo(() => buildMockParts(partSources), [partSources])
+  const rows = React.useMemo(() => {
+    const filtered = applyFilter(all, filter)
+    return filtered.sort((a, b) => b.inventoryValueEur - a.inventoryValueEur)
+  }, [all, filter])
+
+  const selectedIds = React.useMemo(
+    () => Object.entries(selected).filter(([, v]) => v).map(([k]) => k),
+    [selected]
+  )
+  const selectedCount = selectedIds.length
+  const allChecked = rows.length > 0 && selectedCount === rows.length
+  const indeterminate = selectedCount > 0 && selectedCount < rows.length
+
+  const createTicketForPart = React.useCallback(
+    (row: PartRow) => {
+      const existing = tickets[row.id]
+      if (existing) return existing
+      const match = opportunityByPart.get(row.partNumber)
+      const base = Number(row.id.replace(/\D/g, "")) || 1
+      const level = (((base - 1) % 4) + 1) as 1 | 2 | 3 | 4
+      const team = match?.team || "Supply"
+      const ticket: Ticket = {
+        id: `TCK-${1000 + base}`,
+        level,
+        createdAt: new Date(),
+        team,
+        partName: row.partName,
+        partNumber: row.partNumber,
+        description: "Escalation ticket created for part review.",
+      }
+      setTickets((prev) => ({ ...prev, [row.id]: ticket }))
+      return ticket
+    },
+    [opportunityByPart, tickets]
+  )
+
+  const openTicketForRow = React.useCallback(
+    (row: PartRow) => {
+      const ticket = createTicketForPart(row)
+      setActiveTicket(ticket)
+      setOpenTicketPanel(true)
+    },
+    [createTicketForPart]
+  )
+
+  const createTicketsForSelection = React.useCallback(() => {
+    if (selectedIds.length === 0) return
+    let firstTicket: Ticket | null = null
+    rows.forEach((row) => {
+      if (!selectedIds.includes(row.id)) return
+      const ticket = createTicketForPart(row)
+      if (!firstTicket) firstTicket = ticket
+    })
+    setSelected({})
+    if (firstTicket) {
+      setActiveTicket(firstTicket)
+      setOpenTicketPanel(true)
+    }
+  }, [createTicketForPart, rows, selectedIds])
 
   // ─────────────────────────────────────────────
 // EMPTY STATE (no parts match the filters)
@@ -253,6 +391,7 @@ if (rows.length === 0) {
     escalation: "w-[80px]",
     partName: "w-[220px]",
     partNumber: "w-[140px]",
+    inventoryValue: "w-[140px]",
     opp: "w-[56px]",
     program: "w-[140px]",
     plant: "w-[110px]",
@@ -268,12 +407,13 @@ if (rows.length === 0) {
     escalation: "left-[84px]",
     partName: "left-[164px]",
     partNumber: "left-[384px]",
-    opp: "left-[524px]",
-    program: "left-[580px]",
-    plant: "left-[720px]",
-    stock: "left-[830px]",
-    status: "left-[950px]",
-    menu: "left-[1090px]",
+    inventoryValue: "left-[524px]",
+    opp: "left-[664px]",
+    program: "left-[720px]",
+    plant: "left-[860px]",
+    stock: "left-[970px]",
+    status: "left-[1090px]",
+    menu: "left-[1230px]",
   }
 
   const stickyCell = (w: string, l: string) =>
@@ -285,16 +425,49 @@ if (rows.length === 0) {
 
   return (
     <div className="flex flex-col">
+      {selectedCount > 0 && (
+        <div className="sticky top-[72px] z-10 mb-4 flex items-center justify-between rounded-xl border bg-background px-4 py-3 shadow-sm">
+          <div className="text-sm text-muted-foreground">
+            <span className="font-medium text-foreground">{selectedCount}</span>{" "}
+            selected
+          </div>
+          <Button variant="secondary" className="h-9" onClick={createTicketsForSelection}>
+            Create ticket
+          </Button>
+        </div>
+      )}
+
       {/* Scroll container: vertical + horizontal */}
-      <div className="max-h-[420px] overflow-auto rounded-xl border border-border bg-white">
+      <div
+        className={cn(
+          "overflow-auto rounded-xl border border-border bg-white",
+          fullHeight ? "max-h-[calc(100vh-220px)]" : "max-h-[420px]"
+        )}
+      >
       <Table className="min-w-max border-collapse">
           <TableHeader className="sticky top-0 z-20 bg-white">
             <TableRow>
-              <TableHead className={stickyCell(col.check, left.check)} />
+              <TableHead className={stickyCell(col.check, left.check)}>
+                <Checkbox
+                  checked={allChecked ? true : indeterminate ? "indeterminate" : false}
+                  onCheckedChange={(v) => {
+                    if (!v) return setSelected({})
+                    const next: Record<string, boolean> = {}
+                    rows.forEach((r) => (next[r.id] = true))
+                    setSelected(next)
+                  }}
+                  aria-label="Select all"
+                />
+              </TableHead>
               <TableHead className={stickyCell(col.chevron, left.chevron)} />
               <TableHead className={stickyCell(col.escalation, left.escalation)}>Esc.</TableHead>
               <TableHead className={stickyCell(col.partName, left.partName)}>Part Name</TableHead>
-              <TableHead className={stickyCell(col.partNumber, left.partNumber)}>Part No.</TableHead>
+              <TableHead className={stickyCell(col.partNumber, left.partNumber)}>
+                Part Number
+              </TableHead>
+              <TableHead className={stickyCell(col.inventoryValue, left.inventoryValue)}>
+                Inventory value
+              </TableHead>
               <TableHead className={stickyCell(col.opp, left.opp)}>Opp.</TableHead>
               <TableHead className={stickyCell(col.program, left.program)}>Program</TableHead>
               <TableHead className={stickyCell(col.plant, left.plant)}>Plant</TableHead>
@@ -329,7 +502,13 @@ if (rows.length === 0) {
                   {/* Part row */}
                   <TableRow className="group hover:bg-muted/40">
                     <TableCell className={stickyCell(col.check, left.check)}>
-                      <input type="checkbox" className="h-4 w-4" />
+                      <Checkbox
+                        checked={!!selected[r.id]}
+                        onCheckedChange={(v) =>
+                          setSelected((prev) => ({ ...prev, [r.id]: Boolean(v) }))
+                        }
+                        aria-label={`Select ${r.partNumber}`}
+                      />
                     </TableCell>
 
                     <TableCell className={stickyCell(col.chevron, left.chevron)}>
@@ -344,21 +523,59 @@ if (rows.length === 0) {
                     </TableCell>
 
                     <TableCell className={stickyCell(col.escalation, left.escalation)}>
-                      <span className="inline-flex items-center rounded-md bg-muted px-2 py-1 text-xs font-medium">
-                        {r.escalationTicket}
-                      </span>
+                      {tickets[r.id] ? (
+                        <button
+                          type="button"
+                          onClick={() => openTicketForRow(r)}
+                          className="inline-flex"
+                          aria-label="View ticket"
+                        >
+                          <Badge variant="secondary">L{tickets[r.id].level}</Badge>
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          className="inline-flex h-8 w-8 items-center justify-center rounded-md hover:bg-accent"
+                          onClick={() => openTicketForRow(r)}
+                          aria-label="Create ticket"
+                        >
+                          <Files className="h-4 w-4 text-muted-foreground" />
+                        </button>
+                      )}
                     </TableCell>
 
                     <TableCell className={stickyCell(col.partName, left.partName)}>
-                      <a href="#" className="font-medium text-primary underline-offset-4 hover:underline">
+                      <button
+                        type="button"
+                        className="font-medium text-blue-700 hover:text-blue-900"
+                        onClick={() => {
+                          const match = opportunityByPart.get(r.partNumber)
+                          if (!match) return
+                          setPanelRow(match)
+                          setOpenPanel(true)
+                        }}
+                      >
                         {r.partName}
-                      </a>
+                      </button>
                     </TableCell>
 
                     <TableCell className={stickyCell(col.partNumber, left.partNumber)}>
-                      <a href="#" className="text-primary underline-offset-4 hover:underline">
+                      <button
+                        type="button"
+                        className="font-medium text-blue-700 hover:text-blue-900"
+                        onClick={() => {
+                          const match = opportunityByPart.get(r.partNumber)
+                          if (!match) return
+                          setPanelRow(match)
+                          setOpenPanel(true)
+                        }}
+                      >
                         {r.partNumber}
-                      </a>
+                      </button>
+                    </TableCell>
+
+                    <TableCell className={stickyCell(col.inventoryValue, left.inventoryValue)}>
+                      {formatEurCompact(r.inventoryValueEur)}
                     </TableCell>
 
                     <TableCell className={stickyCell(col.opp, left.opp)}>
@@ -424,6 +641,7 @@ if (rows.length === 0) {
                         </TableCell>
                         {/* rest sticky left */}
                         <TableCell className={stickyCell(col.partNumber, left.partNumber)} />
+                        <TableCell className={stickyCell(col.inventoryValue, left.inventoryValue)} />
                         <TableCell className={stickyCell(col.opp, left.opp)} />
                         <TableCell className={stickyCell(col.program, left.program)} />
                         <TableCell className={stickyCell(col.plant, left.plant)} />
@@ -457,6 +675,7 @@ if (rows.length === 0) {
                                   </TableCell>
 
                                   <TableCell className={stickyCell(col.partNumber, left.partNumber)} />
+                                  <TableCell className={stickyCell(col.inventoryValue, left.inventoryValue)} />
                                   <TableCell className={stickyCell(col.opp, left.opp)} />
                                   <TableCell className={stickyCell(col.program, left.program)} />
                                   <TableCell className={stickyCell(col.plant, left.plant)} />
@@ -523,6 +742,7 @@ if (rows.length === 0) {
                               </TableCell>
 
                               <TableCell className={stickyCell(col.partNumber, left.partNumber)} />
+                              <TableCell className={stickyCell(col.inventoryValue, left.inventoryValue)} />
                               <TableCell className={stickyCell(col.opp, left.opp)} />
                               <TableCell className={stickyCell(col.program, left.program)} />
                               <TableCell className={stickyCell(col.plant, left.plant)} />
@@ -664,6 +884,190 @@ if (rows.length === 0) {
           <span>of 1</span>
         </div>
       </div>
+        {openPanel && panelRow ? (
+          <>
+            <div
+              className="fixed inset-0 z-40 bg-black/10"
+              onClick={() => setOpenPanel(false)}
+            />
+            <aside className="fixed right-0 top-0 bottom-0 z-50 w-[420px] max-w-full bg-white shadow-xl">
+              <div className="flex items-start justify-between gap-4 border-b px-5 py-4">
+                <div className="space-y-1">
+                  <div className="text-sm text-muted-foreground">Opportunity</div>
+                  <div className="text-lg font-semibold text-foreground">
+                    {panelRow.orderNumber} • {supplyTypeLabel(panelRow.supplyType)}
+                  </div>
+                  <div className="text-sm text-muted-foreground">
+                    {panelRow.partNumber} — {panelRow.partName}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className="rounded-md p-2 text-muted-foreground hover:bg-muted"
+                  onClick={() => setOpenPanel(false)}
+                  aria-label="Close panel"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+
+              <div className="h-full overflow-y-auto px-5 py-4">
+                <div className="space-y-4">
+                  <div>
+                    <div className="text-xs font-semibold text-muted-foreground">Details</div>
+                    <div className="mt-2 grid grid-cols-2 gap-3 text-sm">
+                      <div>
+                        <div className="text-muted-foreground">Status</div>
+                        <div className="text-foreground">{panelRow.status}</div>
+                      </div>
+                      <div>
+                        <div className="text-muted-foreground">Opportunity type</div>
+                        <div className="text-foreground">{panelRow.suggestedAction}</div>
+                      </div>
+                      <div>
+                        <div className="text-muted-foreground">Suggested date</div>
+                        <div className="text-foreground">
+                          {panelRow.suggestedAction === "Cancel" || !panelRow.suggestedDate
+                            ? "—"
+                            : format(new Date(panelRow.suggestedDate), "MMM d, yyyy")}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-muted-foreground">Delivery date</div>
+                        <div className="text-foreground">
+                          {panelRow.deliveryDate
+                            ? format(new Date(panelRow.deliveryDate), "MMM d, yyyy")
+                            : "—"}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-muted-foreground">Inventory value</div>
+                        <div className="text-foreground">
+                          {formatEurCompact(panelRow.cashImpactEur)}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-muted-foreground">Assignee</div>
+                        <div className="text-foreground">{panelRow.assignee || "—"}</div>
+                      </div>
+                      <div>
+                        <div className="text-muted-foreground">Team</div>
+                        <div className="text-foreground">{panelRow.team || "—"}</div>
+                      </div>
+                      <div>
+                        <div className="text-muted-foreground">Plant</div>
+                        <div className="text-foreground">{panelRow.plant}</div>
+                      </div>
+                      <div>
+                        <div className="text-muted-foreground">Buyer code</div>
+                        <div className="text-foreground">{panelRow.buyerCode}</div>
+                      </div>
+                      <div>
+                        <div className="text-muted-foreground">MRP code</div>
+                        <div className="text-foreground">{panelRow.mrpCode}</div>
+                      </div>
+                      <div>
+                        <div className="text-muted-foreground">Supplier</div>
+                        <div className="text-foreground">{panelRow.supplier}</div>
+                      </div>
+                      <div>
+                        <div className="text-muted-foreground">Customer</div>
+                        <div className="text-foreground">{panelRow.customer}</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="text-xs font-semibold text-muted-foreground">Comments</div>
+                    <div className="mt-2 space-y-3">
+                      <div className="rounded-md border bg-background p-3 text-sm">
+                        <div className="font-medium text-foreground">A. Martin</div>
+                        <div className="text-muted-foreground">
+                          Reviewing supplier dates and awaiting confirmation.
+                        </div>
+                      </div>
+                      <div className="rounded-md border bg-background p-3 text-sm">
+                        <div className="font-medium text-foreground">S. Dubois</div>
+                        <div className="text-muted-foreground">
+                          Planned update for next week based on MRP refresh.
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </aside>
+          </>
+        ) : null}
+
+        {openTicketPanel && activeTicket ? (
+          <>
+            <div
+              className="fixed inset-0 z-40 bg-black/10"
+              onClick={() => setOpenTicketPanel(false)}
+            />
+            <aside className="fixed right-0 top-0 bottom-0 z-50 w-[420px] max-w-full bg-white shadow-xl">
+              <div className="flex items-start justify-between gap-4 border-b px-5 py-4">
+                <div className="space-y-1">
+                  <div className="text-sm text-muted-foreground">Ticket</div>
+                  <div className="text-lg font-semibold text-foreground">{activeTicket.id}</div>
+                  <div className="text-sm text-muted-foreground">
+                    {activeTicket.partNumber} — {activeTicket.partName}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className="rounded-md p-2 text-muted-foreground hover:bg-muted"
+                  onClick={() => setOpenTicketPanel(false)}
+                  aria-label="Close panel"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+
+              <div className="h-full overflow-y-auto px-5 py-4">
+                <div className="space-y-4">
+                  <div>
+                    <div className="text-xs font-semibold text-muted-foreground">Details</div>
+                    <div className="mt-2 grid grid-cols-2 gap-3 text-sm">
+                      <div>
+                        <div className="text-muted-foreground">Creation date</div>
+                        <div className="text-foreground">
+                          {format(activeTicket.createdAt, "MMM d, yyyy")}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-muted-foreground">Team</div>
+                        <div className="text-foreground">{activeTicket.team}</div>
+                      </div>
+                      <div>
+                        <div className="text-muted-foreground">Ticket level</div>
+                        <div className="text-foreground">L{activeTicket.level}</div>
+                      </div>
+                      <div>
+                        <div className="text-muted-foreground">Part</div>
+                        <div className="text-foreground">
+                          {activeTicket.partNumber} — {activeTicket.partName}
+                        </div>
+                      </div>
+                      <div className="col-span-2">
+                        <div className="text-muted-foreground">Description</div>
+                        <div className="text-foreground">{activeTicket.description}</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="text-xs font-semibold text-muted-foreground">Comments</div>
+                    <div className="mt-2 rounded-md border bg-background p-3 text-sm text-muted-foreground">
+                      No comments yet.
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </aside>
+          </>
+        ) : null}
     </div>
   )
 }

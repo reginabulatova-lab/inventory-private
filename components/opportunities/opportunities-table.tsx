@@ -153,6 +153,9 @@ export function OpportunitiesTable({
   showSummary = true,
   statusFilter,
   teamFilter,
+  actionBarOffsetClass = "top-[72px]",
+  actionBarGapClass = "mt-3",
+  actionBarClassName = "",
 }: {
   filter?: OpportunitiesTableFilter
   showToolbar?: boolean
@@ -165,6 +168,9 @@ export function OpportunitiesTable({
   showSummary?: boolean
   statusFilter?: Opportunity["status"] | null
   teamFilter?: string | null
+  actionBarOffsetClass?: string
+  actionBarGapClass?: string
+  actionBarClassName?: string
 }) {
   const {
     snoozeByIds,
@@ -281,25 +287,57 @@ export function OpportunitiesTable({
   }, [scopedAll, scopedBase, filter, statusFilter, teamFilter])
 
   const rows = filteredRows
-  const displayRows = React.useMemo(() => {
-    const scaled = rows.map((row) => ({
-      ...row,
-      inventoryValueEur: useRawInventoryValue
-        ? row.cashImpactEur
-        : Math.round(row.cashImpactEur * scale),
-    }))
-    return scaled.sort((a, b) => {
-      const byValue = b.inventoryValueEur - a.inventoryValueEur
-      if (byValue !== 0) return byValue
-      const aTime = Number.isFinite(new Date(a.suggestedDate).getTime())
-        ? new Date(a.suggestedDate).getTime()
-        : Infinity
-      const bTime = Number.isFinite(new Date(b.suggestedDate).getTime())
-        ? new Date(b.suggestedDate).getTime()
-        : Infinity
-      return aTime - bTime
+  const rowMeta = React.useMemo(() => {
+    const meta = new Map<
+      string,
+      {
+        inventoryValueEur: number
+        suggestedDateTime: number
+        suggestedDateLabel: string
+        deliveryDateLabel: string
+      }
+    >()
+    rows.forEach((row) => {
+      const suggestedTime = Date.parse(row.suggestedDate)
+      const safeSuggestedTime = Number.isFinite(suggestedTime) ? suggestedTime : Infinity
+      const suggestedDateLabel =
+        row.suggestedAction === "Cancel" || !Number.isFinite(suggestedTime)
+          ? ""
+          : format(new Date(suggestedTime), "MMM d, yyyy")
+      const deliveryTime = Date.parse(row.deliveryDate)
+      const deliveryDateLabel = Number.isFinite(deliveryTime)
+        ? format(new Date(deliveryTime), "MMM d, yyyy")
+        : "—"
+      meta.set(row.id, {
+        inventoryValueEur: useRawInventoryValue
+          ? row.cashImpactEur
+          : Math.round(row.cashImpactEur * scale),
+        suggestedDateTime: safeSuggestedTime,
+        suggestedDateLabel,
+        deliveryDateLabel,
+      })
     })
+    return meta
   }, [rows, scale, useRawInventoryValue])
+
+  const rowById = React.useMemo(() => {
+    const map = new Map<string, (typeof rows)[number]>()
+    rows.forEach((row) => {
+      map.set(row.id, row)
+    })
+    return map
+  }, [rows])
+
+  const sortedRowIds = React.useMemo(() => {
+    const ids = rows.map((row) => row.id)
+    return ids.sort((aId, bId) => {
+      const aMeta = rowMeta.get(aId)
+      const bMeta = rowMeta.get(bId)
+      const byValue = (bMeta?.inventoryValueEur ?? 0) - (aMeta?.inventoryValueEur ?? 0)
+      if (byValue !== 0) return byValue
+      return (aMeta?.suggestedDateTime ?? Infinity) - (bMeta?.suggestedDateTime ?? Infinity)
+    })
+  }, [rows, rowMeta])
 
   const assigneeOptions = React.useMemo(() => {
     const values = Array.from(
@@ -325,6 +363,8 @@ export function OpportunitiesTable({
   const [openDeliveryId, setOpenDeliveryId] = React.useState<string | null>(null)
   const [deliveryDraft, setDeliveryDraft] = React.useState<Date | undefined>(undefined)
   const [snackbarOpen, setSnackbarOpen] = React.useState(false)
+  const [snackbarMessage, setSnackbarMessage] = React.useState("")
+  const [, startTransition] = React.useTransition()
 
   const selectedIds = React.useMemo(
     () => Object.entries(selected).filter(([, v]) => v).map(([k]) => k),
@@ -339,12 +379,14 @@ export function OpportunitiesTable({
     .filter((r) => r.suggestedAction === "Push Out")
     .map((r) => r.id)
 
-  const showPushOutSnackbar = React.useCallback(() => {
+  const showSnackbar = React.useCallback((message: string) => {
+    setSnackbarMessage(message)
     setSnackbarOpen(true)
     window.setTimeout(() => setSnackbarOpen(false), 3500)
   }, [])
 
   const statusSummary = React.useMemo(() => {
+    if (!showSummary) return null
     const summary = {
       Backlog: { count: 0, total: 0 },
       "To Do": { count: 0, total: 0 },
@@ -354,10 +396,10 @@ export function OpportunitiesTable({
       Snoozed: { count: 0, total: 0 },
     } as Record<string, { count: number; total: number }>
 
-    displayRows.forEach((row) => {
+    rows.forEach((row) => {
       const entry = summary[row.status] ?? { count: 0, total: 0 }
       entry.count += 1
-      entry.total += row.inventoryValueEur
+      entry.total += rowMeta.get(row.id)?.inventoryValueEur ?? 0
       summary[row.status] = entry
     })
 
@@ -366,7 +408,7 @@ export function OpportunitiesTable({
       .reduce((sum, [, entry]) => sum + entry.total, 0)
 
     return { summary, nonSnoozedTotal }
-  }, [displayRows])
+  }, [rows, rowMeta, showSummary])
 
   const toggleAll = (checked: boolean) => {
     if (!checked) return setSelected({})
@@ -390,7 +432,7 @@ export function OpportunitiesTable({
   const applyPushOutSelected = () => {
     applyPushOutByIds(selectedPushOutIds)
     setSelected({})
-    showPushOutSnackbar()
+    showSnackbar("Date updated successfully! The ticket is now marked as Done.")
   }
 
   const allChecked = rows.length > 0 && selectedCount === rows.length
@@ -398,7 +440,7 @@ export function OpportunitiesTable({
 
   return (
     <div className="space-y-3">
-      {showToolbar && showSummary ? (
+      {showToolbar && showSummary && statusSummary ? (
         <div className="rounded-xl border bg-background p-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex flex-wrap items-center gap-3 text-sm">
@@ -430,7 +472,9 @@ export function OpportunitiesTable({
 
       {/* Action bar */}
       {showToolbar && selectedCount > 0 && (
-        <div className="sticky top-[72px] z-10 flex items-center justify-between rounded-xl border bg-background px-4 py-3 shadow-sm">
+        <div
+          className={`sticky ${actionBarOffsetClass} z-10 flex items-center justify-between rounded-xl border bg-background px-4 py-3 shadow-sm ${actionBarClassName}`}
+        >
           <div className="text-sm text-muted-foreground">
             <span className="font-medium text-foreground">{selectedCount}</span>{" "}
             selected
@@ -462,7 +506,11 @@ export function OpportunitiesTable({
         </div>
       )}
 
-      <div className="rounded-xl border bg-background overflow-hidden">
+      <div
+        className={`rounded-xl border bg-background overflow-hidden ${
+          showToolbar && selectedCount > 0 ? actionBarGapClass : ""
+        }`}
+      >
         <Table>
           <TableHeader>
             <TableRow>
@@ -500,24 +548,24 @@ export function OpportunitiesTable({
           </TableHeader>
 
           <TableBody>
-            {displayRows.map((r) => (
-              <TableRow key={r.id} className={r.status === "Snoozed" ? "opacity-60" : ""}>
-                <TableCell>
-                  <Checkbox
-                    checked={!!selected[r.id]}
-                    onCheckedChange={(v) =>
-                      setSelected((prev) => ({ ...prev, [r.id]: Boolean(v) }))
-                    }
-                    aria-label={`Select ${r.orderNumber}`}
-                  />
-                </TableCell>
-                <TableCell className="font-medium">{r.suggestedAction}</TableCell>
-                <TableCell>
-                  {r.suggestedAction === "Cancel" || !r.suggestedDate
-                    ? ""
-                    : format(new Date(r.suggestedDate), "MMM d, yyyy")}
-                </TableCell>
-                <TableCell>
+            {sortedRowIds.map((rowId) => {
+              const r = rowById.get(rowId)
+              if (!r) return null
+              const meta = rowMeta.get(r.id)
+              return (
+                <TableRow key={r.id} className={r.status === "Snoozed" ? "opacity-60" : ""}>
+                  <TableCell>
+                    <Checkbox
+                      checked={!!selected[r.id]}
+                      onCheckedChange={(v) =>
+                        setSelected((prev) => ({ ...prev, [r.id]: Boolean(v) }))
+                      }
+                      aria-label={`Select ${r.orderNumber}`}
+                    />
+                  </TableCell>
+                  <TableCell className="font-medium">{r.suggestedAction}</TableCell>
+                  <TableCell>{meta?.suggestedDateLabel ?? ""}</TableCell>
+                  <TableCell>
                   <Popover
                     open={openDeliveryId === r.id}
                     onOpenChange={(open) => {
@@ -537,11 +585,7 @@ export function OpportunitiesTable({
                         className="inline-flex w-full items-center gap-2 rounded-md px-2 py-1 text-left text-sm hover:bg-muted/40"
                         aria-label="Edit delivery date"
                       >
-                        <span>
-                          {!r.deliveryDate
-                            ? "—"
-                            : format(new Date(r.deliveryDate), "MMM d, yyyy")}
-                        </span>
+                        <span>{meta?.deliveryDateLabel ?? "—"}</span>
                         <Pencil className="h-3.5 w-3.5 text-[#B8B8B8]" />
                       </button>
                     </PopoverTrigger>
@@ -568,7 +612,9 @@ export function OpportunitiesTable({
                             onClick={() => {
                               applyPushOutByIds([r.id])
                               setOpenDeliveryId(null)
-                              showPushOutSnackbar()
+                              showSnackbar(
+                                "Date updated successfully! The ticket is now marked as Done."
+                              )
                             }}
                           >
                             Apply push out
@@ -578,13 +624,21 @@ export function OpportunitiesTable({
                     </PopoverContent>
                   </Popover>
                 </TableCell>
-                <TableCell>{formatEurCompact(r.inventoryValueEur)}</TableCell>
+                  <TableCell>{formatEurCompact(meta?.inventoryValueEur ?? 0)}</TableCell>
                 <TableCell>
                   <Select
                     value={r.status}
-                    onValueChange={(value) =>
-                      setStatusByIds([r.id], value as any)
-                    }
+                    onValueChange={(value) => {
+                      const nextStatus = value as Opportunity["status"]
+                      startTransition(() => {
+                        setStatusByIds([r.id], nextStatus)
+                      })
+                      if (nextStatus === "To Do" && (!r.assignee || !r.team)) {
+                        showSnackbar(
+                          "Status changed to To Do. Assignee and team were assigned automatically based on the scope."
+                        )
+                      }
+                    }}
                   >
                     <SelectTrigger className="h-8 w-[150px] rounded-full border bg-muted/40 px-2 text-xs font-semibold shadow-none hover:bg-muted/60 data-[state=open]:bg-muted/70">
                       <SelectValue />
@@ -688,8 +742,9 @@ export function OpportunitiesTable({
                 <TableCell>{r.plant}</TableCell>
                 <TableCell>{r.buyerCode}</TableCell>
                 <TableCell>{r.mrpCode}</TableCell>
-              </TableRow>
-            ))}
+                </TableRow>
+              )
+            })}
           </TableBody>
         </Table>
 
@@ -810,7 +865,7 @@ export function OpportunitiesTable({
         <div className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-full border bg-white px-4 py-2 text-sm text-foreground shadow-lg">
           <span className="inline-flex items-center gap-2">
             <Check className="h-4 w-4 text-emerald-600" />
-            Date updated successfully! The ticket is now marked as Done.
+            {snackbarMessage}
           </span>
         </div>
       ) : null}
@@ -888,9 +943,19 @@ export function OpportunitiesTable({
             </Button>
             <Button
               onClick={() => {
-                setStatusByIds(selectedIds, bulkStatus)
+                startTransition(() => {
+                  setStatusByIds(selectedIds, bulkStatus)
+                })
                 setSelected({})
                 setOpenStatus(false)
+                if (
+                  bulkStatus === "To Do" &&
+                  selectedRows.some((row) => !row.assignee || !row.team)
+                ) {
+                  showSnackbar(
+                    "Status changed to To Do. Assignee and team were assigned automatically based on the scope."
+                  )
+                }
               }}
             >
               Apply status

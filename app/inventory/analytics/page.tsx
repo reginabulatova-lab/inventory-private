@@ -18,7 +18,7 @@ export default function InventoryAnalyticsPage() {
 
       <div className="px-6 pb-6 pt-4">
         {/* ✅ This is the same table from Control Tower, with NO filters */}
-        <PartbookTable filter={null} />
+        <PartbookTable filter={null} fullHeight />
 
         {/* Keep AI chat on this page */}
         <FloatingAIChat />

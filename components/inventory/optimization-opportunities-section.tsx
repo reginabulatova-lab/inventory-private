@@ -285,6 +285,9 @@ export function OptimizationOpportunitiesSection() {
           showToolbar
           showSummary={false}
           includeSnoozed={false}
+          actionBarOffsetClass="top-0"
+          actionBarGapClass="mt-3"
+          actionBarClassName="mt-3"
         />
       </BottomSheetModal>
     </section>
