@@ -29,6 +29,15 @@ export type SnoozeRule = {
   value: string
 }
 
+export type EscalationTicket = {
+  id: string
+  level: 1 | 2 | 3 | 4
+  createdAt: string
+  team: string
+  partName: string
+  partNumber: string
+  description: string
+}
 const FALLBACK_BUYER_CODES = ["AV67", "TY82", "BN29"]
 const FALLBACK_MRP_CODES = ["XJ45", "WM22", "QR98", "ZL16"]
 const FALLBACK_TEAMS = ["Supply", "Production", "Customer Support"]
@@ -184,6 +193,9 @@ type InventoryDataContextValue = {
   setDeliveryDateByIds: (ids: string[], deliveryDate: Opportunity["deliveryDate"]) => void
   applyPushOutByIds: (ids: string[]) => void
 
+  escalationTickets: Record<string, EscalationTicket | undefined>
+  upsertEscalationTicket: (ticket: EscalationTicket) => void
+
   /**
    * Expose a stable "now" so other computations can be consistent too if needed.
    * (Optional but useful.)
@@ -203,6 +215,7 @@ const InventoryDataContext = React.createContext<InventoryDataContextValue | nul
 
 const LS_KEY = "inventory_opportunities_v1"
 const LS_RULES_KEY = "inventory_snooze_rules_v1"
+const LS_TICKETS_KEY = "inventory_escalation_tickets_v1"
 
 function planFromPath(pathname: string | null): Plan {
   if (!pathname) return "ERP"
@@ -235,6 +248,9 @@ export function InventoryDataProvider({ children }: { children: React.ReactNode 
     mrpCodes: [],
   })
   const [snoozeRules, setSnoozeRules] = React.useState<SnoozeRule[]>([])
+  const [escalationTickets, setEscalationTickets] = React.useState<
+    Record<string, EscalationTicket | undefined>
+  >({})
 
   // ✅ single source of truth for timeframe preset + range (derived from stable now)
   const [timeframePreset, setTimeframePreset] = React.useState<PresetKey>("current")
@@ -291,6 +307,19 @@ export function InventoryDataProvider({ children }: { children: React.ReactNode 
     }
   }, [])
 
+  React.useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(LS_TICKETS_KEY)
+      if (!raw) return
+      const parsed = JSON.parse(raw)
+      if (parsed && typeof parsed === "object") {
+        setEscalationTickets(parsed as Record<string, EscalationTicket | undefined>)
+      }
+    } catch {
+      // ignore
+    }
+  }, [])
+
   // Persist
   React.useEffect(() => {
     try {
@@ -307,6 +336,14 @@ export function InventoryDataProvider({ children }: { children: React.ReactNode 
       // ignore
     }
   }, [snoozeRules])
+
+  React.useEffect(() => {
+    try {
+      window.localStorage.setItem(LS_TICKETS_KEY, JSON.stringify(escalationTickets))
+    } catch {
+      // ignore
+    }
+  }, [escalationTickets])
 
   const updateStatusByIds = React.useCallback((ids: string[], status: Opportunity["status"]) => {
     if (ids.length === 0) return
@@ -446,6 +483,13 @@ export function InventoryDataProvider({ children }: { children: React.ReactNode 
     )
   }, [])
 
+  const upsertEscalationTicket = React.useCallback((ticket: EscalationTicket) => {
+    setEscalationTickets((prev) => ({
+      ...prev,
+      [ticket.partNumber]: ticket,
+    }))
+  }, [])
+
   const applyRule = React.useCallback((rule: SnoozeRule, rows: Opportunity[]) => {
     return rows.map((o) => {
       const matches =
@@ -513,6 +557,8 @@ export function InventoryDataProvider({ children }: { children: React.ReactNode 
       setTeamByIds,
       setDeliveryDateByIds,
       applyPushOutByIds,
+      escalationTickets,
+      upsertEscalationTicket,
       now,
       filters,
       setFilters,
@@ -544,6 +590,8 @@ export function InventoryDataProvider({ children }: { children: React.ReactNode 
       setTeamByIds,
       setDeliveryDateByIds,
       applyPushOutByIds,
+      escalationTickets,
+      upsertEscalationTicket,
       now,
       filters,
       snoozeRules,
@@ -561,7 +609,11 @@ export function useInventoryData() {
   return ctx
 }
 
-export function applyOpportunityFilters(opps: Opportunity[], filters: OpportunityFilters) {
+export function applyOpportunityFilters(
+  opps: Opportunity[],
+  filters: OpportunityFilters,
+  escalationTickets?: Record<string, EscalationTicket | undefined>
+) {
   let res = opps
   if (filters.partKeys.length > 0) {
     res = res.filter((o) => filters.partKeys.includes(buildPartKey(o)))
@@ -573,7 +625,15 @@ export function applyOpportunityFilters(opps: Opportunity[], filters: Opportunit
     res = res.filter((o) => filters.customers.includes(o.customer))
   }
   if (filters.escLevels.length > 0) {
-    res = res.filter((o) => filters.escLevels.includes(o.escLevel))
+    if (escalationTickets) {
+      res = res.filter((o) => {
+        const ticket = escalationTickets[o.partNumber]
+        if (!ticket) return false
+        return filters.escLevels.includes(ticket.level)
+      })
+    } else {
+      res = res.filter((o) => filters.escLevels.includes(o.escLevel))
+    }
   }
   if (filters.statuses.length > 0) {
     res = res.filter((o) => filters.statuses.includes(o.status))
@@ -591,7 +651,8 @@ export function applyOpportunityFilters(opps: Opportunity[], filters: Opportunit
 }
 
 export function useFilteredOpportunities(options?: { includeSnoozed?: boolean }) {
-  const { plan, dateRange, opportunities, timeframePreset, filters } = useInventoryData()
+  const { plan, dateRange, opportunities, timeframePreset, filters, escalationTickets } =
+    useInventoryData()
   const { includeSnoozed = true } = options ?? {}
 
   return React.useMemo(() => {
@@ -625,7 +686,7 @@ export function useFilteredOpportunities(options?: { includeSnoozed?: boolean })
       }
     }
 
-    return applyOpportunityFilters(res, filters)
+    return applyOpportunityFilters(res, filters, escalationTickets)
   }, [
     plan,
     dateRange.from,
@@ -641,6 +702,7 @@ export function useFilteredOpportunities(options?: { includeSnoozed?: boolean })
     filters.plants,
     filters.buyerCodes,
     filters.mrpCodes,
+    escalationTickets,
   ])
 }
 

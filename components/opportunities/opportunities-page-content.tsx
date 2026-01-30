@@ -13,10 +13,8 @@ import {
   useInventoryData,
 } from "@/components/inventory/inventory-data-provider"
 import {
-  capOpportunitiesTotal,
   computeHealthRiskKPIs,
   filterOpportunitiesByMode,
-  getOpportunitiesScale,
   getOpportunityMode,
 } from "@/lib/inventory/selectors"
 import type { Opportunity } from "@/lib/inventory/types"
@@ -50,32 +48,13 @@ export function OpportunitiesPageContent() {
     () => filterOpportunitiesByMode(allOpportunities, mode),
     [allOpportunities, mode]
   )
-  const baseTotal = React.useMemo(
-    () => scopedAll.reduce((sum, opp) => sum + opp.cashImpactEur, 0),
-    [scopedAll]
-  )
-  const targetTotal = React.useMemo(
-    () =>
-      capOpportunitiesTotal(baseTotal, {
-        inventoryEur: kpis.inventoryEur,
-        overstockEur: kpis.overstockEur,
-        understockEur: kpis.understockEur,
-        mode,
-      }),
-    [baseTotal, kpis.inventoryEur, kpis.overstockEur, kpis.understockEur, mode]
-  )
-  const scale = React.useMemo(
-    () => getOpportunitiesScale(baseTotal, targetTotal),
-    [baseTotal, targetTotal]
-  )
-
   const rows = React.useMemo(
     () =>
       scopedAll.map((row) => ({
         ...row,
-        inventoryValueEur: Math.round(row.cashImpactEur * scale),
+        inventoryValueEur: row.cashImpactEur,
       })),
-    [scopedAll, scale]
+    [scopedAll]
   )
 
   const statusData = React.useMemo<PieDatum[]>(() => {
@@ -158,6 +137,7 @@ export function OpportunitiesPageContent() {
         showSummary={false}
         statusFilter={statusFilter}
         teamFilter={teamFilter === "Unassigned" ? "" : teamFilter}
+        useRawInventoryValue
       />
     </div>
   )

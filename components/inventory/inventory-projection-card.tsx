@@ -22,9 +22,9 @@ import {
   applyOpportunityFilters,
   useInventoryData,
 } from "@/components/inventory/inventory-data-provider"
-import { computeHealthRiskKPIs } from "@/lib/inventory/selectors"
 
 type ViewMode = "quarter" | "month"
+type ChartMode = "snapshot" | "projection"
 
 type Point = {
   label: string
@@ -62,6 +62,18 @@ function formatKeur(v: number) {
   return `${Math.round(v)} K€`
 }
 
+function startOfDay(d: Date) {
+  const x = new Date(d)
+  x.setHours(0, 0, 0, 0)
+  return x
+}
+
+function endOfDay(d: Date) {
+  const x = new Date(d)
+  x.setHours(23, 59, 59, 999)
+  return x
+}
+
 function startOfMonth(d: Date) {
   return new Date(d.getFullYear(), d.getMonth(), 1)
 }
@@ -80,7 +92,20 @@ function endOfQuarter(d: Date) {
   return new Date(d.getFullYear(), q + 3, 0, 23, 59, 59, 999)
 }
 
-const MONTH_LABELS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+const MONTH_LABELS = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+]
 
 function formatMonthLabel(d: Date) {
   return `${MONTH_LABELS[d.getMonth()]} ${d.getFullYear()}`
@@ -108,11 +133,22 @@ function rangeFromQuarterLabel(label: string) {
   return { from, to }
 }
 
-function buildMonthSeries(start: Date, opps: { suggestedDate: string; cashImpactEur: number }[]) {
-  const startDate = startOfMonth(start)
-  return Array.from({ length: 12 }, (_, i) => {
-    const monthStart = new Date(startDate.getFullYear(), startDate.getMonth() + i, 1)
-    const monthEnd = new Date(startDate.getFullYear(), startDate.getMonth() + i + 1, 0, 23, 59, 59, 999)
+function buildMonthSeries(
+  from: Date,
+  to: Date,
+  opps: { suggestedDate: string; cashImpactEur: number }[]
+) {
+  const start = startOfMonth(from)
+  const end = endOfMonth(to)
+  const months: Date[] = []
+  let cursor = new Date(start)
+  while (cursor <= end) {
+    months.push(new Date(cursor))
+    cursor = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1)
+  }
+
+  return months.map((monthStart) => {
+    const monthEnd = endOfMonth(monthStart)
     const quarterStart = startOfQuarter(monthStart)
     const quarterEnd = endOfQuarter(monthStart)
     const quarterDays =
@@ -128,15 +164,28 @@ function buildMonthSeries(start: Date, opps: { suggestedDate: string; cashImpact
       label: formatMonthLabel(monthStart),
       oppEur: totalEur,
       targetK: Math.round((TARGET_QUARTER_EUR * (monthDays / quarterDays)) / 1000),
+      monthIndex: monthStart.getMonth(),
+      year: monthStart.getFullYear(),
     }
   })
 }
 
-function buildQuarterSeries(start: Date, opps: { suggestedDate: string; cashImpactEur: number }[]) {
-  const startDate = startOfQuarter(start)
-  return Array.from({ length: 4 }, (_, i) => {
-    const quarterStart = new Date(startDate.getFullYear(), startDate.getMonth() + i * 3, 1)
-    const quarterEnd = new Date(startDate.getFullYear(), startDate.getMonth() + i * 3 + 3, 0, 23, 59, 59, 999)
+function buildQuarterSeries(
+  from: Date,
+  to: Date,
+  opps: { suggestedDate: string; cashImpactEur: number }[]
+) {
+  const start = startOfQuarter(from)
+  const end = endOfQuarter(to)
+  const quarters: Date[] = []
+  let cursor = new Date(start)
+  while (cursor <= end) {
+    quarters.push(new Date(cursor))
+    cursor = new Date(cursor.getFullYear(), cursor.getMonth() + 3, 1)
+  }
+
+  return quarters.map((quarterStart) => {
+    const quarterEnd = endOfQuarter(quarterStart)
     const totalEur = opps.reduce((sum, o) => {
       const t = new Date(o.suggestedDate).getTime()
       if (!Number.isFinite(t)) return sum
@@ -148,8 +197,14 @@ function buildQuarterSeries(start: Date, opps: { suggestedDate: string; cashImpa
       label: `Q${q} ${quarterStart.getFullYear()}`,
       oppEur: totalEur,
       targetK: Math.round(TARGET_QUARTER_EUR / 1000),
+      quarterIndex: q - 1,
+      year: quarterStart.getFullYear(),
     }
   })
+}
+
+function formatCaptionDate(d: Date) {
+  return d.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })
 }
 
 function tooltipValueFormatter(value: any) {
@@ -250,11 +305,34 @@ export function InventoryProjectionCard() {
   const [open, setOpen] = React.useState(false)
   const [periodLabel, setPeriodLabel] = React.useState<string | null>(null)
   const [periodRange, setPeriodRange] = React.useState<{ from: Date; to: Date } | null>(null)
-  const { opportunities, plan, filters, dateRange } = useInventoryData()
+  const {
+    opportunities,
+    plan,
+    filters,
+    dateRange,
+    escalationTickets,
+    timeframePreset,
+    now,
+  } = useInventoryData()
+
+  const chartMode: ChartMode = timeframePreset === "current" ? "snapshot" : "projection"
+
+  const rangeFrom = React.useMemo(() => {
+    if (chartMode === "snapshot") return startOfDay(now)
+    if (dateRange.from) return startOfDay(dateRange.from)
+    return startOfDay(now)
+  }, [chartMode, dateRange.from, now])
+
+  const rangeTo = React.useMemo(() => {
+    if (chartMode === "snapshot") return endOfDay(now)
+    if (dateRange.to) return endOfDay(dateRange.to)
+    if (dateRange.from) return endOfDay(dateRange.from)
+    return endOfDay(now)
+  }, [chartMode, dateRange.from, dateRange.to, now])
 
   const opps = React.useMemo(() => {
-    const from = dateRange.from ? dateRange.from.getTime() : -Infinity
-    const to = dateRange.to ? dateRange.to.getTime() : Infinity
+    const from = rangeFrom.getTime()
+    const to = rangeTo.getTime()
     const base = opportunities.filter((o) => {
       if (o.plan !== plan) return false
       if (o.status === "Snoozed" || o.status === "Canceled") return false
@@ -262,30 +340,57 @@ export function InventoryProjectionCard() {
       if (!Number.isFinite(t)) return false
       return t >= from && t <= to
     })
-    return applyOpportunityFilters(base, filters)
+    return applyOpportunityFilters(base, filters, escalationTickets)
   }, [
     opportunities,
     plan,
-    dateRange.from,
-    dateRange.to,
+    rangeFrom,
+    rangeTo,
     filters.partKeys,
     filters.suggestedActions,
     filters.customers,
     filters.escLevels,
     filters.statuses,
+    escalationTickets,
   ])
 
-  const kpis = computeHealthRiskKPIs(opps)
-
-  const start = new Date()
-  const monthOpp = React.useMemo(() => buildMonthSeries(start, opps), [start, opps])
-  const quarterOpp = React.useMemo(() => buildQuarterSeries(start, opps), [start, opps])
+  const monthOpp = React.useMemo(
+    () => buildMonthSeries(rangeFrom, rangeTo, opps),
+    [rangeFrom, rangeTo, opps]
+  )
+  const quarterOpp = React.useMemo(
+    () => buildQuarterSeries(rangeFrom, rangeTo, opps),
+    [rangeFrom, rangeTo, opps]
+  )
 
   const data = React.useMemo<Point[]>(() => {
+    if (chartMode === "snapshot") {
+      const oppK = Math.round(
+        opps.reduce((sum, o) => sum + (Number.isFinite(o.cashImpactEur) ? o.cashImpactEur : 0), 0) /
+          1000
+      )
+      const monthIndex = rangeFrom.getMonth()
+      const quarterIndex = Math.floor(monthIndex / 3)
+      const erpBase =
+        mode === "month"
+          ? ERP_MONTH_TEMPLATE[monthIndex % ERP_MONTH_TEMPLATE.length]
+          : ERP_QUARTER_TEMPLATE[quarterIndex % ERP_QUARTER_TEMPLATE.length]
+      const target = Math.max(Math.round(oppK * 1.08), oppK + 15)
+      const erp = Math.max(erpBase, target + Math.max(25, Math.round(target * 0.12)))
+      return [
+        {
+          label: "Today",
+          opp: oppK,
+          erp,
+          target,
+        },
+      ]
+    }
+
     if (mode === "month") {
       return monthOpp.map((row, i) => {
         const oppK = Math.round(row.oppEur / 1000)
-        const erpBase = ERP_MONTH_TEMPLATE[i % ERP_MONTH_TEMPLATE.length]
+        const erpBase = ERP_MONTH_TEMPLATE[row.monthIndex % ERP_MONTH_TEMPLATE.length]
         const target = Math.max(Math.round(oppK * 1.08), oppK + 15)
         const erp = Math.max(erpBase, target + Math.max(25, Math.round(target * 0.12)))
         return {
@@ -298,7 +403,7 @@ export function InventoryProjectionCard() {
     }
     return quarterOpp.map((row, i) => {
       const oppK = Math.round(row.oppEur / 1000)
-      const erpBase = ERP_QUARTER_TEMPLATE[i % ERP_QUARTER_TEMPLATE.length]
+      const erpBase = ERP_QUARTER_TEMPLATE[row.quarterIndex % ERP_QUARTER_TEMPLATE.length]
       const target = Math.max(Math.round(oppK * 1.08), oppK + 15)
       const erp = Math.max(erpBase, target + Math.max(25, Math.round(target * 0.12)))
       return {
@@ -308,10 +413,16 @@ export function InventoryProjectionCard() {
         target,
       }
     })
-  }, [mode, monthOpp, quarterOpp])
+  }, [chartMode, mode, monthOpp, quarterOpp, opps, rangeFrom])
+
+  const caption =
+    chartMode === "snapshot"
+      ? "Inventory as of today"
+      : `Projected from ${formatCaptionDate(rangeFrom)} to ${formatCaptionDate(rangeTo)}`
 
   const handleChartClick = React.useCallback(
     (e: any) => {
+      if (chartMode === "snapshot") return
       const label = e?.activeLabel ?? e?.activePayload?.[0]?.payload?.label
       if (!label) return
       const range =
@@ -321,13 +432,18 @@ export function InventoryProjectionCard() {
       setPeriodRange(range)
       setOpen(true)
     },
-    [mode]
+    [chartMode, mode]
   )
 
   return (
     <WidgetCard
-      title="Projected Inventory"
-      tooltip="Comparison between ERP plan and projected inventory if all not-snoozed opportunities are applied."
+      title={chartMode === "snapshot" ? "Current Inventory Position" : "Projected Inventory"}
+      tooltip={
+        chartMode === "snapshot"
+          ? "Inventory position as of today (snapshot)."
+          : "Comparison between ERP plan and projected inventory if all not-snoozed opportunities are applied."
+      }
+      subtitle={caption}
       size="l"
       headerRight={
         <div className="flex items-center gap-2">
@@ -362,7 +478,7 @@ export function InventoryProjectionCard() {
             data={data}
             margin={{ top: 8, right: 8, left: 8, bottom: 8 }}
             onClick={handleChartClick}
-            style={{ cursor: "pointer" }}
+            style={{ cursor: chartMode === "snapshot" ? "default" : "pointer" }}
           >
             <CartesianGrid vertical={true} horizontal={true} strokeDasharray="0" opacity={0.25} />
 
@@ -399,11 +515,17 @@ export function InventoryProjectionCard() {
               formatter={(value) => {
                 const label =
                   value === "erp"
-                    ? "ERP plan"
+                    ? chartMode === "snapshot"
+                      ? "ERP plan (today)"
+                      : "ERP plan"
                     : value === "opp"
-                      ? "With Opportunities"
+                      ? chartMode === "snapshot"
+                        ? "Opportunities (potential)"
+                        : "With Opportunities"
                       : value === "target"
-                        ? "Target"
+                        ? chartMode === "snapshot"
+                          ? "Target (today)"
+                          : "Target"
                         : String(value)
 
                 return <span className="text-sm text-muted-foreground">{label}</span>
@@ -417,6 +539,7 @@ export function InventoryProjectionCard() {
               strokeWidth={2.5}
               dot={{ r: 4, stroke: "#ffffff", strokeWidth: 2, fill: "#19A7B0" }}
               activeDot={{ r: 5, stroke: "#ffffff", strokeWidth: 4, fill: "#19A7B0" }}
+              opacity={chartMode === "snapshot" ? 0.95 : 1}
             />
 
             <Line
@@ -427,6 +550,7 @@ export function InventoryProjectionCard() {
               strokeDasharray="5 5"
               dot={{ r: 4, stroke: "#ffffff", strokeWidth: 2, fill: "#19A7B0" }}
               activeDot={{ r: 5, stroke: "#ffffff", strokeWidth: 4, fill: "#19A7B0" }}
+              opacity={chartMode === "snapshot" ? 0.45 : 1}
             />
 
             {showTarget ? (
@@ -437,6 +561,7 @@ export function InventoryProjectionCard() {
                 strokeWidth={2}
                 dot={false}
                 activeDot={false}
+                opacity={chartMode === "snapshot" ? 0.7 : 1}
               />
             ) : null}
           </LineChart>

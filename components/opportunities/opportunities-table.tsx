@@ -6,6 +6,7 @@ import {
   applyOpportunityFilters,
   useFilteredOpportunities,
   useInventoryData,
+  type EscalationTicket,
 } from "@/components/inventory/inventory-data-provider"
 import type { Opportunity } from "@/lib/inventory/types"
 import {
@@ -28,6 +29,7 @@ import {
   CircleDashed,
   CircleDotDashed,
   Clock,
+  Files,
   Pencil,
   PauseCircle,
   X,
@@ -128,6 +130,13 @@ function statusIcon(status: string) {
   return <CircleDotDashed className={`${className} fill-current`} />
 }
 
+function ticketBadgeClass(level: EscalationTicket["level"]) {
+  if (level === 1) return "bg-cyan-100 text-cyan-800"
+  if (level === 2) return "bg-yellow-100 text-yellow-800"
+  if (level === 3) return "bg-red-100 text-red-800"
+  return "bg-zinc-300 text-zinc-900"
+}
+
 function StatusLabel({ status }: { status: string }) {
   return (
     <span className="inline-flex items-center gap-1.5">
@@ -180,6 +189,8 @@ export function OpportunitiesTable({
     setTeamByIds,
     setDeliveryDateByIds,
     applyPushOutByIds,
+    escalationTickets,
+    upsertEscalationTicket,
     dateRange,
     plan,
     opportunities,
@@ -201,7 +212,7 @@ export function OpportunitiesTable({
       if (!Number.isFinite(t)) return false
       return t >= from && t <= to
     })
-    res = applyOpportunityFilters(res, filters)
+    res = applyOpportunityFilters(res, filters, escalationTickets)
     if (overrideStatus) res = res.filter((o) => o.status === overrideStatus)
     if (excludeStatuses?.length) {
       res = res.filter((o) => !excludeStatuses.includes(o.status))
@@ -360,10 +371,18 @@ export function OpportunitiesTable({
   const [bulkStatus, setBulkStatus] = React.useState<Opportunity["status"]>("Backlog")
   const [openPanel, setOpenPanel] = React.useState(false)
   const [panelRow, setPanelRow] = React.useState<Opportunity | null>(null)
+  const [openTicketPanel, setOpenTicketPanel] = React.useState(false)
+  const [activeTicket, setActiveTicket] = React.useState<EscalationTicket | null>(null)
   const [openDeliveryId, setOpenDeliveryId] = React.useState<string | null>(null)
   const [deliveryDraft, setDeliveryDraft] = React.useState<Date | undefined>(undefined)
   const [snackbarOpen, setSnackbarOpen] = React.useState(false)
   const [snackbarMessage, setSnackbarMessage] = React.useState("")
+  const [ticketCommentDraft, setTicketCommentDraft] = React.useState("")
+  const [ticketComments, setTicketComments] = React.useState<Record<string, { id: string; text: string; createdAt: string }[]>>({})
+  const [commentsById, setCommentsById] = React.useState<
+    Record<string, { id: string; text: string; createdAt: string }[]>
+  >({})
+  const [commentDraft, setCommentDraft] = React.useState("")
   const [, startTransition] = React.useTransition()
 
   const selectedIds = React.useMemo(
@@ -535,10 +554,11 @@ export function OpportunitiesTable({
                   <ArrowDown className="h-3.5 w-3.5 text-muted-foreground" />
                 </div>
               </TableHead>
-              <TableHead>Status</TableHead>
+            <TableHead>Status</TableHead>
               <TableHead>Team</TableHead>
               <TableHead>Assignee</TableHead>
               <TableHead>Order number</TableHead>
+            <TableHead>Esc.</TableHead>
               <TableHead>Part Name</TableHead>
               <TableHead>Part Number</TableHead>
               <TableHead>Plant</TableHead>
@@ -624,7 +644,7 @@ export function OpportunitiesTable({
                     </PopoverContent>
                   </Popover>
                 </TableCell>
-                  <TableCell>{formatEurCompact(meta?.inventoryValueEur ?? 0)}</TableCell>
+                <TableCell>{formatEurCompact(meta?.inventoryValueEur ?? 0)}</TableCell>
                 <TableCell>
                   <Select
                     value={r.status}
@@ -714,6 +734,45 @@ export function OpportunitiesTable({
                   >
                     {r.orderNumber}
                   </button>
+                </TableCell>
+                <TableCell>
+                  {escalationTickets[r.partNumber] ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setActiveTicket(escalationTickets[r.partNumber] ?? null)
+                        setOpenTicketPanel(true)
+                      }}
+                      className="inline-flex"
+                      aria-label="View ticket"
+                    >
+                      <Badge className={ticketBadgeClass(escalationTickets[r.partNumber]!.level)}>
+                        L{escalationTickets[r.partNumber]!.level}
+                      </Badge>
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      className="inline-flex h-8 w-8 items-center justify-center rounded-md hover:bg-accent"
+                      onClick={() => {
+                        const ticket: EscalationTicket = {
+                          id: `TCK-${1000 + Number(r.id.replace(/\D/g, ""))}`,
+                          level: 1,
+                          createdAt: new Date().toISOString(),
+                          team: r.team || "Supply",
+                          partName: r.partName,
+                          partNumber: r.partNumber,
+                          description: "Escalation ticket created for part review.",
+                        }
+                        upsertEscalationTicket(ticket)
+                        setActiveTicket(ticket)
+                        setOpenTicketPanel(true)
+                      }}
+                      aria-label="Create ticket"
+                    >
+                      <Files className="h-4 w-4 text-muted-foreground" />
+                    </button>
+                  )}
                 </TableCell>
                 <TableCell>
                   <button
@@ -840,16 +899,194 @@ export function OpportunitiesTable({
                   <div>
                     <div className="text-xs font-semibold text-muted-foreground">Comments</div>
                     <div className="mt-2 space-y-3">
+                      {(commentsById[panelRow.id] ?? []).length === 0 ? (
+                        <div className="rounded-md border bg-background p-3 text-sm text-muted-foreground">
+                          No comments yet.
+                        </div>
+                      ) : (
+                        (commentsById[panelRow.id] ?? []).map((comment) => (
+                          <div key={comment.id} className="rounded-md border bg-background p-3 text-sm">
+                            <div className="flex items-center justify-between">
+                              <div className="font-medium text-foreground">You</div>
+                              <div className="text-xs text-muted-foreground">
+                                {format(new Date(comment.createdAt), "MMM d, yyyy HH:mm")}
+                              </div>
+                            </div>
+                            <div className="mt-1 text-muted-foreground">{comment.text}</div>
+                          </div>
+                        ))
+                      )}
+
                       <div className="rounded-md border bg-background p-3 text-sm">
-                        <div className="font-medium text-foreground">A. Martin</div>
-                        <div className="text-muted-foreground">
-                          Reviewing supplier dates and awaiting confirmation.
+                        <label className="text-xs font-semibold text-muted-foreground">Add comment</label>
+                        <textarea
+                          className="mt-2 w-full rounded-md border border-border p-2 text-sm"
+                          rows={3}
+                          value={commentDraft}
+                          onChange={(e) => setCommentDraft(e.target.value)}
+                          placeholder="Write a comment..."
+                        />
+                        <div className="mt-2 flex justify-end">
+                          <Button
+                            className="h-8"
+                            onClick={() => {
+                              const text = commentDraft.trim()
+                              if (!text) return
+                              setCommentsById((prev) => ({
+                                ...prev,
+                                [panelRow.id]: [
+                                  ...(prev[panelRow.id] ?? []),
+                                  {
+                                    id: `${Date.now()}`,
+                                    text,
+                                    createdAt: new Date().toISOString(),
+                                  },
+                                ],
+                              }))
+                              setCommentDraft("")
+                            }}
+                          >
+                            Add comment
+                          </Button>
                         </div>
                       </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </aside>
+          </>
+        ) : null}
+
+        {openTicketPanel && activeTicket ? (
+          <>
+            <div
+              className="fixed inset-0 z-40 bg-black/10"
+              onClick={() => setOpenTicketPanel(false)}
+            />
+            <aside className="fixed right-0 top-0 bottom-0 z-50 w-[420px] max-w-full bg-white shadow-xl">
+              <div className="flex items-start justify-between gap-4 border-b px-5 py-4">
+                <div className="space-y-1">
+                  <div className="text-sm text-muted-foreground">Ticket</div>
+                  <div className="text-lg font-semibold text-foreground">{activeTicket.id}</div>
+                  <div className="text-sm text-muted-foreground">
+                    {activeTicket.partNumber} — {activeTicket.partName}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className="rounded-md p-2 text-muted-foreground hover:bg-muted"
+                  onClick={() => setOpenTicketPanel(false)}
+                  aria-label="Close panel"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+
+              <div className="h-full overflow-y-auto px-5 py-4">
+                <div className="space-y-4">
+                  <div>
+                    <div className="text-xs font-semibold text-muted-foreground">Details</div>
+                    <div className="mt-2 grid grid-cols-2 gap-3 text-sm">
+                      <div>
+                        <div className="text-muted-foreground">Creation date</div>
+                        <div className="text-foreground">
+                          {format(new Date(activeTicket.createdAt), "MMM d, yyyy HH:mm")}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-muted-foreground">Team</div>
+                        <div className="text-foreground">{activeTicket.team}</div>
+                      </div>
+                      <div>
+                        <div className="text-muted-foreground">Ticket level</div>
+                        <select
+                          className="h-9 rounded-md border border-border bg-white px-2 text-sm text-foreground"
+                          value={activeTicket.level}
+                          onChange={(e) => {
+                            const nextLevel = Number(e.target.value) as EscalationTicket["level"]
+                            setActiveTicket((prev) =>
+                              prev ? { ...prev, level: nextLevel } : prev
+                            )
+                            if (activeTicket) {
+                              upsertEscalationTicket({
+                                ...activeTicket,
+                                level: nextLevel,
+                              })
+                            }
+                          }}
+                        >
+                          <option value={1}>Level 1</option>
+                          <option value={2}>Level 2</option>
+                          <option value={3}>Level 3</option>
+                          <option value={4}>Level 4</option>
+                        </select>
+                      </div>
+                      <div>
+                        <div className="text-muted-foreground">Part</div>
+                        <div className="text-foreground">
+                          {activeTicket.partNumber} — {activeTicket.partName}
+                        </div>
+                      </div>
+                      <div className="col-span-2">
+                        <div className="text-muted-foreground">Description</div>
+                        <div className="text-foreground">{activeTicket.description}</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="text-xs font-semibold text-muted-foreground">Comments</div>
+                    <div className="mt-2 space-y-3">
+                      {(ticketComments[activeTicket.id] ?? []).length === 0 ? (
+                        <div className="rounded-md border bg-background p-3 text-sm text-muted-foreground">
+                          No comments yet.
+                        </div>
+                      ) : (
+                        (ticketComments[activeTicket.id] ?? []).map((comment) => (
+                          <div key={comment.id} className="rounded-md border bg-background p-3 text-sm">
+                            <div className="flex items-center justify-between">
+                              <div className="font-medium text-foreground">You</div>
+                              <div className="text-xs text-muted-foreground">
+                                {format(new Date(comment.createdAt), "MMM d, yyyy HH:mm")}
+                              </div>
+                            </div>
+                            <div className="mt-1 text-muted-foreground">{comment.text}</div>
+                          </div>
+                        ))
+                      )}
+
                       <div className="rounded-md border bg-background p-3 text-sm">
-                        <div className="font-medium text-foreground">S. Dubois</div>
-                        <div className="text-muted-foreground">
-                          Planned update for next week based on MRP refresh.
+                        <label className="text-xs font-semibold text-muted-foreground">Add comment</label>
+                        <textarea
+                          className="mt-2 w-full rounded-md border border-border p-2 text-sm"
+                          rows={3}
+                          value={ticketCommentDraft}
+                          onChange={(e) => setTicketCommentDraft(e.target.value)}
+                          placeholder="Write a comment..."
+                        />
+                        <div className="mt-2 flex justify-end">
+                          <Button
+                            className="h-8"
+                            onClick={() => {
+                              const text = ticketCommentDraft.trim()
+                              if (!text) return
+                              setTicketComments((prev) => ({
+                                ...prev,
+                                [activeTicket.id]: [
+                                  ...(prev[activeTicket.id] ?? []),
+                                  {
+                                    id: `${Date.now()}`,
+                                    text,
+                                    createdAt: new Date().toISOString(),
+                                  },
+                                ],
+                              }))
+                              setTicketCommentDraft("")
+                            }}
+                          >
+                            Add comment
+                          </Button>
                         </div>
                       </div>
                     </div>

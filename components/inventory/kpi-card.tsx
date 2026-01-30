@@ -18,12 +18,13 @@ function SizeClass(size: WidgetSize) {
 }
 
 type WidgetCardProps = {
-  title: string
+  title: React.ReactNode
   tooltip?: string
   icon?: React.ReactNode
   size?: WidgetSize
   className?: string
   headerRight?: React.ReactNode
+  subtitle?: React.ReactNode
   children: React.ReactNode
 }
 
@@ -38,6 +39,7 @@ export function WidgetCard({
   size = "s",
   className,
   headerRight,
+  subtitle,
   children,
 }: WidgetCardProps) {
   return (
@@ -50,32 +52,38 @@ export function WidgetCard({
       )}
     >
       <div className="flex items-start justify-between gap-3">
-        <div className="flex items-center gap-2">
-          {icon ? <div className="text-muted-foreground">{icon}</div> : null}
-
+        <div className="flex flex-col gap-2">
           <div className="flex items-center gap-2">
-            <div className="text-sm font-semibold">{title}</div>
+            {icon ? <div className="text-muted-foreground">{icon}</div> : null}
 
-            {tooltip ? (
-              <TooltipProvider>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <button
-                      type="button"
-                      className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-border text-[10px] text-muted-foreground hover:bg-accent"
-                      aria-label="Info"
-                    >
-                      i
-                    </button>
-                  </TooltipTrigger>
+            <div className="flex items-center gap-2">
+              <div className="text-sm font-semibold">{title}</div>
 
-                  <TooltipContent side="top">
-                    <p>{tooltip}</p>
-                  </TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
-            ) : null}
+              {tooltip ? (
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        type="button"
+                        className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-border text-[10px] text-muted-foreground hover:bg-accent"
+                        aria-label="Info"
+                      >
+                        i
+                      </button>
+                    </TooltipTrigger>
+
+                    <TooltipContent side="top">
+                      <p>{tooltip}</p>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              ) : null}
+            </div>
           </div>
+
+          {subtitle ? (
+            <div className="text-xs text-muted-foreground">{subtitle}</div>
+          ) : null}
         </div>
 
         {headerRight ? <div className="shrink-0">{headerRight}</div> : null}

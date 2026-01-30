@@ -4,6 +4,7 @@ import * as React from "react"
 import { format } from "date-fns"
 import { cn } from "@/lib/utils"
 import {
+  ArrowDown,
   ChevronDown,
   ChevronRight,
   Files,
@@ -14,8 +15,9 @@ import {
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Badge } from "@/components/ui/badge"
-import { useInventoryData } from "@/components/inventory/inventory-data-provider"
+import { useInventoryData, type EscalationTicket } from "@/components/inventory/inventory-data-provider"
 import type { Opportunity } from "@/lib/inventory/types"
+import type { RiskPart } from "@/lib/inventory/health-risk-kpis"
 import {
     TOP_10_PROGRAMS,
     OTHER_PROGRAMS,
@@ -72,14 +74,10 @@ type LineKey =
 
 type LineMap = Record<LineKey, HeatCell[]>
 
-type Ticket = {
+type Comment = {
   id: string
-  level: 1 | 2 | 3 | 4
-  createdAt: Date
-  team: string
-  partName: string
-  partNumber: string
-  description: string
+  text: string
+  createdAt: string
 }
 
 function addCells(a: HeatCell[], b: HeatCell[]): HeatCell[] {
@@ -123,6 +121,13 @@ function formatEurCompact(value: number) {
 
 function supplyTypeLabel(value: string) {
   return value === "PO" ? "Purchase Order" : value === "PR" ? "Purchase Request" : value
+}
+
+function ticketBadgeClass(level: EscalationTicket["level"]) {
+  if (level === 1) return "bg-cyan-100 text-cyan-800"
+  if (level === 2) return "bg-yellow-100 text-yellow-800"
+  if (level === 3) return "bg-red-100 text-red-800"
+  return "bg-zinc-300 text-zinc-900"
 }
 
 function deriveStatus(cells: HeatCell[]): HeatCell[] {
@@ -174,54 +179,64 @@ function makeWeeks(): HeatCell[] {
   return weeks
 }
 
-function buildMockParts(parts: PartSource[]): PartRow[] {
-    const topProgramsNoOther = TOP_10_PROGRAMS.filter((p) => p !== "Other")
-    const allPrograms = [...topProgramsNoOther, ...OTHER_PROGRAMS]
-    const fallbackParts = parts.length > 0 ? parts : [{ partName: "Part name 1", partNumber: "PN-1000" }]
-  
-    return Array.from({ length: 10 }).map((_, i) => {
-      const program = allPrograms[i % allPrograms.length]
-      const stockStatus = STOCK_STATUS_CATEGORIES[i % STOCK_STATUS_CATEGORIES.length]
-      const part = fallbackParts[i % fallbackParts.length]
+function buildMockRow(part: PartSource, index: number, idOverride?: string): PartRow {
+  const topProgramsNoOther = TOP_10_PROGRAMS.filter((p) => p !== "Other")
+  const allPrograms = [...topProgramsNoOther, ...OTHER_PROGRAMS]
+  const program = allPrograms[index % allPrograms.length]
+  const stockStatus = STOCK_STATUS_CATEGORIES[index % STOCK_STATUS_CATEGORIES.length]
 
-      const base = makeWeeks()
+  const base = makeWeeks()
 
-        const mkLine = (seed: number): HeatCell[] =>
-            base.map((c, idx) => {
-                const raw = Math.round((Math.abs(c.value) / (seed + idx + 3)) * (idx % 2 === 0 ? -1 : 1))
-                return { ...c, value: raw, status: statusFromValue(raw) }
-            })
-
-        const lines: LineMap = {
-            "needs.customerOrders": mkLine(i + 1),
-            "needs.workOrders": mkLine(i + 2),
-            "resources.purchaseOrders": mkLine(i + 3),
-            "resources.workOrders": mkLine(i + 4),
-        }
-  
-      const inventoryValueEur = 5_000 + ((i + 1) * 13_579) % 145_000
-
-      return {
-        id: `p${i + 1}`,
-        escalationTicket: `T-${(i % 4) + 1}`,
-        partName: part.partName,
-        partNumber: part.partNumber,
-        inventoryValueEur,
-        hasOpportunities: i % 2 === 0,
-        program,
-        plant: i % 2 === 0 ? "1123" : "1130",
-        currentStock: i % 2 === 0 ? 12 : 0,
-        stockStatus,
-        lateCount: 10 - i,
-        heatmap: makeWeeks().map((c, idx) => ({
-          ...c,
-          status: (["red", "yellow", "green"] as const)[(i + idx) % 3],
-          value: Math.round(Math.abs(c.value) / (i + 2)),
-        })),
-        lines,
-      }
+  const mkLine = (seed: number): HeatCell[] =>
+    base.map((c, idx) => {
+      const raw = Math.round((Math.abs(c.value) / (seed + idx + 3)) * (idx % 2 === 0 ? -1 : 1))
+      return { ...c, value: raw, status: statusFromValue(raw) }
     })
+
+  const lines: LineMap = {
+    "needs.customerOrders": mkLine(index + 1),
+    "needs.workOrders": mkLine(index + 2),
+    "resources.purchaseOrders": mkLine(index + 3),
+    "resources.workOrders": mkLine(index + 4),
   }
+
+  const inventoryValueEur = 5_000 + ((index + 1) * 13_579) % 145_000
+
+  return {
+    id: idOverride ?? `p${index + 1}`,
+    escalationTicket: `T-${(index % 4) + 1}`,
+    partName: part.partName,
+    partNumber: part.partNumber,
+    inventoryValueEur,
+    hasOpportunities: index % 2 === 0,
+    program,
+    plant: index % 2 === 0 ? "1123" : "1130",
+    currentStock: index % 2 === 0 ? 12 : 0,
+    stockStatus,
+    lateCount: 10 - index,
+    heatmap: makeWeeks().map((c, idx) => ({
+      ...c,
+      status: (["red", "yellow", "green"] as const)[(index + idx) % 3],
+      value: Math.round(Math.abs(c.value) / (index + 2)),
+    })),
+    lines,
+  }
+}
+
+function buildMockParts(parts: PartSource[]): PartRow[] {
+  const fallbackParts =
+    parts.length > 0 ? parts : [{ partName: "Part name 1", partNumber: "PN-1000" }]
+
+  return Array.from({ length: 10 }).map((_, i) => {
+    const part = fallbackParts[i % fallbackParts.length]
+    return buildMockRow(part, i)
+  })
+}
+
+function buildMockRowsForParts(parts: PartSource[]): PartRow[] {
+  if (parts.length === 0) return buildMockParts(parts)
+  return parts.map((part, i) => buildMockRow(part, i, part.partNumber))
+}
   
 /**
  * Filtering rules (prototype):
@@ -262,17 +277,24 @@ function applyFilter(rows: PartRow[], filter: FilterContext): PartRow[] {
 export function PartbookTable({
   filter,
   fullHeight = false,
+  overrideParts,
+  valueLabel,
 }: {
   filter: FilterContext
   fullHeight?: boolean
+  overrideParts?: RiskPart[]
+  valueLabel?: string
 }) {
-  const { opportunities, plan } = useInventoryData()
+  const { opportunities, plan, escalationTickets, upsertEscalationTicket } = useInventoryData()
   const [openPanel, setOpenPanel] = React.useState(false)
   const [panelRow, setPanelRow] = React.useState<Opportunity | null>(null)
   const [openTicketPanel, setOpenTicketPanel] = React.useState(false)
-  const [activeTicket, setActiveTicket] = React.useState<Ticket | null>(null)
-  const [tickets, setTickets] = React.useState<Record<string, Ticket>>({})
+  const [activeTicket, setActiveTicket] = React.useState<EscalationTicket | null>(null)
   const [selected, setSelected] = React.useState<Record<string, boolean>>({})
+  const [partComments, setPartComments] = React.useState<Record<string, Comment[]>>({})
+  const [partCommentDraft, setPartCommentDraft] = React.useState("")
+  const [ticketComments, setTicketComments] = React.useState<Record<string, Comment[]>>({})
+  const [ticketCommentDraft, setTicketCommentDraft] = React.useState("")
 
   const partSources = React.useMemo<PartSource[]>(() => {
     const map = new Map<string, PartSource>()
@@ -298,9 +320,26 @@ export function PartbookTable({
 
   const all = React.useMemo(() => buildMockParts(partSources), [partSources])
   const rows = React.useMemo(() => {
+    if (overrideParts) {
+      if (overrideParts.length === 0) return []
+      const sources = overrideParts.map((p) => ({
+        partName: p.partName,
+        partNumber: p.partNumber,
+      }))
+      const byPart = new Map(
+        overrideParts.map((p) => [p.partNumber, p.contributionEur])
+      )
+      return buildMockRowsForParts(sources)
+        .map((row) => ({
+          ...row,
+          inventoryValueEur: byPart.get(row.partNumber) ?? 0,
+        }))
+        .sort((a, b) => b.inventoryValueEur - a.inventoryValueEur)
+    }
+
     const filtered = applyFilter(all, filter)
     return filtered.sort((a, b) => b.inventoryValueEur - a.inventoryValueEur)
-  }, [all, filter])
+  }, [all, filter, overrideParts])
 
   const selectedIds = React.useMemo(
     () => Object.entries(selected).filter(([, v]) => v).map(([k]) => k),
@@ -312,25 +351,25 @@ export function PartbookTable({
 
   const createTicketForPart = React.useCallback(
     (row: PartRow) => {
-      const existing = tickets[row.id]
+      const existing = escalationTickets[row.partNumber]
       if (existing) return existing
       const match = opportunityByPart.get(row.partNumber)
       const base = Number(row.id.replace(/\D/g, "")) || 1
       const level = (((base - 1) % 4) + 1) as 1 | 2 | 3 | 4
       const team = match?.team || "Supply"
-      const ticket: Ticket = {
+      const ticket: EscalationTicket = {
         id: `TCK-${1000 + base}`,
         level,
-        createdAt: new Date(),
+        createdAt: new Date().toISOString(),
         team,
         partName: row.partName,
         partNumber: row.partNumber,
         description: "Escalation ticket created for part review.",
       }
-      setTickets((prev) => ({ ...prev, [row.id]: ticket }))
+      upsertEscalationTicket(ticket)
       return ticket
     },
-    [opportunityByPart, tickets]
+    [opportunityByPart, escalationTickets, upsertEscalationTicket]
   )
 
   const openTicketForRow = React.useCallback(
@@ -344,7 +383,7 @@ export function PartbookTable({
 
   const createTicketsForSelection = React.useCallback(() => {
     if (selectedIds.length === 0) return
-    let firstTicket: Ticket | null = null
+    let firstTicket: EscalationTicket | null = null
     rows.forEach((row) => {
       if (!selectedIds.includes(row.id)) return
       const ticket = createTicketForPart(row)
@@ -466,7 +505,10 @@ if (rows.length === 0) {
                 Part Number
               </TableHead>
               <TableHead className={stickyCell(col.inventoryValue, left.inventoryValue)}>
-                Inventory value
+                <div className="flex items-center gap-1">
+                  {valueLabel ?? "Inventory value"}
+                  <ArrowDown className="h-3.5 w-3.5 text-muted-foreground" />
+                </div>
               </TableHead>
               <TableHead className={stickyCell(col.opp, left.opp)}>Opp.</TableHead>
               <TableHead className={stickyCell(col.program, left.program)}>Program</TableHead>
@@ -523,14 +565,16 @@ if (rows.length === 0) {
                     </TableCell>
 
                     <TableCell className={stickyCell(col.escalation, left.escalation)}>
-                      {tickets[r.id] ? (
+                      {escalationTickets[r.partNumber] ? (
                         <button
                           type="button"
                           onClick={() => openTicketForRow(r)}
                           className="inline-flex"
                           aria-label="View ticket"
                         >
-                          <Badge variant="secondary">L{tickets[r.id].level}</Badge>
+                          <Badge className={ticketBadgeClass(escalationTickets[r.partNumber]!.level)}>
+                            L{escalationTickets[r.partNumber]!.level}
+                          </Badge>
                         </button>
                       ) : (
                         <button
@@ -980,16 +1024,55 @@ if (rows.length === 0) {
                   <div>
                     <div className="text-xs font-semibold text-muted-foreground">Comments</div>
                     <div className="mt-2 space-y-3">
-                      <div className="rounded-md border bg-background p-3 text-sm">
-                        <div className="font-medium text-foreground">A. Martin</div>
-                        <div className="text-muted-foreground">
-                          Reviewing supplier dates and awaiting confirmation.
+                      {(partComments[panelRow.id] ?? []).length === 0 ? (
+                        <div className="rounded-md border bg-background p-3 text-sm text-muted-foreground">
+                          No comments yet.
                         </div>
-                      </div>
+                      ) : (
+                        (partComments[panelRow.id] ?? []).map((comment) => (
+                          <div key={comment.id} className="rounded-md border bg-background p-3 text-sm">
+                            <div className="flex items-center justify-between">
+                              <div className="font-medium text-foreground">You</div>
+                              <div className="text-xs text-muted-foreground">
+                                {format(new Date(comment.createdAt), "MMM d, yyyy HH:mm")}
+                              </div>
+                            </div>
+                            <div className="mt-1 text-muted-foreground">{comment.text}</div>
+                          </div>
+                        ))
+                      )}
+
                       <div className="rounded-md border bg-background p-3 text-sm">
-                        <div className="font-medium text-foreground">S. Dubois</div>
-                        <div className="text-muted-foreground">
-                          Planned update for next week based on MRP refresh.
+                        <label className="text-xs font-semibold text-muted-foreground">Add comment</label>
+                        <textarea
+                          className="mt-2 w-full rounded-md border border-border p-2 text-sm"
+                          rows={3}
+                          value={partCommentDraft}
+                          onChange={(e) => setPartCommentDraft(e.target.value)}
+                          placeholder="Write a comment..."
+                        />
+                        <div className="mt-2 flex justify-end">
+                          <Button
+                            className="h-8"
+                            onClick={() => {
+                              const text = partCommentDraft.trim()
+                              if (!text) return
+                              setPartComments((prev) => ({
+                                ...prev,
+                                [panelRow.id]: [
+                                  ...(prev[panelRow.id] ?? []),
+                                  {
+                                    id: `${Date.now()}`,
+                                    text,
+                                    createdAt: new Date().toISOString(),
+                                  },
+                                ],
+                              }))
+                              setPartCommentDraft("")
+                            }}
+                          >
+                            Add comment
+                          </Button>
                         </div>
                       </div>
                     </div>
@@ -1033,7 +1116,7 @@ if (rows.length === 0) {
                       <div>
                         <div className="text-muted-foreground">Creation date</div>
                         <div className="text-foreground">
-                          {format(activeTicket.createdAt, "MMM d, yyyy")}
+                          {format(new Date(activeTicket.createdAt), "MMM d, yyyy")}
                         </div>
                       </div>
                       <div>
@@ -1042,7 +1125,27 @@ if (rows.length === 0) {
                       </div>
                       <div>
                         <div className="text-muted-foreground">Ticket level</div>
-                        <div className="text-foreground">L{activeTicket.level}</div>
+                        <select
+                          className="h-9 rounded-md border border-border bg-white px-2 text-sm text-foreground"
+                          value={activeTicket.level}
+                          onChange={(e) => {
+                            const nextLevel = Number(e.target.value) as EscalationTicket["level"]
+                            setActiveTicket((prev) =>
+                              prev ? { ...prev, level: nextLevel } : prev
+                            )
+                            if (activeTicket) {
+                              upsertEscalationTicket({
+                                ...activeTicket,
+                                level: nextLevel,
+                              })
+                            }
+                          }}
+                        >
+                          <option value={1}>Level 1</option>
+                          <option value={2}>Level 2</option>
+                          <option value={3}>Level 3</option>
+                          <option value={4}>Level 4</option>
+                        </select>
                       </div>
                       <div>
                         <div className="text-muted-foreground">Part</div>
@@ -1059,8 +1162,59 @@ if (rows.length === 0) {
 
                   <div>
                     <div className="text-xs font-semibold text-muted-foreground">Comments</div>
-                    <div className="mt-2 rounded-md border bg-background p-3 text-sm text-muted-foreground">
-                      No comments yet.
+                    <div className="mt-2 space-y-3">
+                      {(activeTicket && (ticketComments[activeTicket.id] ?? []).length === 0) ? (
+                        <div className="rounded-md border bg-background p-3 text-sm text-muted-foreground">
+                          No comments yet.
+                        </div>
+                      ) : (
+                        (ticketComments[activeTicket?.id ?? ""] ?? []).map((comment) => (
+                          <div key={comment.id} className="rounded-md border bg-background p-3 text-sm">
+                            <div className="flex items-center justify-between">
+                              <div className="font-medium text-foreground">You</div>
+                              <div className="text-xs text-muted-foreground">
+                                {format(new Date(comment.createdAt), "MMM d, yyyy HH:mm")}
+                              </div>
+                            </div>
+                            <div className="mt-1 text-muted-foreground">{comment.text}</div>
+                          </div>
+                        ))
+                      )}
+
+                      <div className="rounded-md border bg-background p-3 text-sm">
+                        <label className="text-xs font-semibold text-muted-foreground">Add comment</label>
+                        <textarea
+                          className="mt-2 w-full rounded-md border border-border p-2 text-sm"
+                          rows={3}
+                          value={ticketCommentDraft}
+                          onChange={(e) => setTicketCommentDraft(e.target.value)}
+                          placeholder="Write a comment..."
+                        />
+                        <div className="mt-2 flex justify-end">
+                          <Button
+                            className="h-8"
+                            onClick={() => {
+                              if (!activeTicket) return
+                              const text = ticketCommentDraft.trim()
+                              if (!text) return
+                              setTicketComments((prev) => ({
+                                ...prev,
+                                [activeTicket.id]: [
+                                  ...(prev[activeTicket.id] ?? []),
+                                  {
+                                    id: `${Date.now()}`,
+                                    text,
+                                    createdAt: new Date().toISOString(),
+                                  },
+                                ],
+                              }))
+                              setTicketCommentDraft("")
+                            }}
+                          >
+                            Add comment
+                          </Button>
+                        </div>
+                      </div>
                     </div>
                   </div>
                 </div>

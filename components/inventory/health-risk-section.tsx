@@ -5,9 +5,16 @@ import { KpiCard } from "@/components/inventory/kpi-card"
 import { InventoryProjectionCard } from "@/components/inventory/inventory-projection-card"
 import { BottomSheetModal } from "@/components/inventory/bottom-sheet-modal"
 import { PartbookTable } from "@/components/inventory/partbook-table"
-import { useFilteredOpportunities, useInventoryData } from "@/components/inventory/inventory-data-provider"
-import { computeHealthRiskKPIs, timeframeScale } from "@/lib/inventory/selectors"
-import { computeInventoryBreakdown } from "@/lib/inventory/breakdown"
+import {
+  applyOpportunityFilters,
+  useInventoryData,
+} from "@/components/inventory/inventory-data-provider"
+import {
+  buildPartMetrics,
+  buildPartSources,
+  computeHealthRiskKpisFromParts,
+  type HealthRiskKpis,
+} from "@/lib/inventory/health-risk-kpis"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 
 function formatEurCompact(value: number) {
@@ -17,31 +24,74 @@ function formatEurCompact(value: number) {
   return `€${Math.round(value)}`
 }
 
+function startOfDay(d: Date) {
+  const x = new Date(d)
+  x.setHours(0, 0, 0, 0)
+  return x
+}
+
 export function HealthRiskSection() {
   const [open, setOpen] = React.useState(false)
   const [activeKpi, setActiveKpi] = React.useState<string | null>(null)
-  const { dateRange } = useInventoryData()
-
-  // All opportunities for current plan + timeframe
-  // Snoozed should NOT appear in Control Tower
-  const opportunities = useFilteredOpportunities({ includeSnoozed: false })
-
-  const breakdown = computeInventoryBreakdown(opportunities, dateRange.from, dateRange.to)
-  const inventoryEur = breakdown.kpiTotalEur
-
-  // Compute realistic KPI values from opportunities + timeframe
-  const kpis = computeHealthRiskKPIs(
+  const {
     opportunities,
-    dateRange.from,
-    dateRange.to
+    plan,
+    filters,
+    escalationTickets,
+    timeframePreset,
+    dateRange,
+    now,
+  } = useInventoryData()
+
+  const chartMode = timeframePreset === "current" ? "snapshot" : "projection"
+  const todayStart = React.useMemo(() => startOfDay(now), [now])
+  const rangeFrom = React.useMemo(() => todayStart, [todayStart])
+  const rangeTo = React.useMemo(() => {
+    if (chartMode === "snapshot") return todayStart
+    if (dateRange.to) return startOfDay(dateRange.to)
+    if (dateRange.from) return startOfDay(dateRange.from)
+    return todayStart
+  }, [chartMode, dateRange.from, dateRange.to, todayStart])
+
+  const baseOpps = React.useMemo(() => {
+    const eligible = opportunities.filter((o) => {
+      if (o.plan !== plan) return false
+      if (o.status === "Snoozed" || o.status === "Canceled") return false
+      return true
+    })
+    return applyOpportunityFilters(eligible, filters, escalationTickets)
+  }, [
+    opportunities,
+    plan,
+    filters.partKeys,
+    filters.suggestedActions,
+    filters.customers,
+    filters.escLevels,
+    filters.statuses,
+    filters.plants,
+    filters.buyerCodes,
+    filters.mrpCodes,
+    escalationTickets,
+  ])
+
+  const parts = React.useMemo(() => {
+    const sources = buildPartSources(baseOpps, plan)
+    return buildPartMetrics(sources)
+  }, [baseOpps, plan])
+
+  const kpis = React.useMemo<HealthRiskKpis>(
+    () =>
+      computeHealthRiskKpisFromParts({
+        parts,
+        mode: chartMode,
+        rangeFrom,
+        rangeTo,
+        todayStart,
+      }),
+    [parts, chartMode, rangeFrom, rangeTo, todayStart]
   )
-  const TARGET_QUARTER_EUR = 2_400_000
-  const TARGET_OVERSTOCK_EUR = 900_000
-  const TARGET_UNDERSTOCK_EUR = 700_000
-  const scale = timeframeScale(dateRange.from, dateRange.to, 90)
-  const targetInventory = Math.round(TARGET_QUARTER_EUR * scale)
-  const targetOverstock = Math.round(TARGET_OVERSTOCK_EUR * scale)
-  const targetUnderstock = Math.round(TARGET_UNDERSTOCK_EUR * scale)
+
+  const hideUnderstock = chartMode === "snapshot"
 
   const kpiValue = React.useCallback(
     (value: string, title: string) => (
@@ -76,22 +126,25 @@ export function HealthRiskSection() {
       <div className="mt-5 grid grid-cols-12 gap-6">
         <KpiCard
           title="Inventory"
-          value={`${(kpis.inventoryEur / 1_000_000).toFixed(1)} M€`}
-          valueNode={kpiValue(`${(kpis.inventoryEur / 1_000_000).toFixed(1)} M€`, "Inventory")}
+          value={formatEurCompact(kpis.inventoryEur)}
+          valueNode={kpiValue(formatEurCompact(kpis.inventoryEur), "Inventory")}
         />
 
         <KpiCard
           title="Overstock"
-          value={`${(kpis.overstockEur / 1_000_000).toFixed(1)} M€`}
-          description={`${kpis.overstockParts} parts`}
-          valueNode={kpiValue(`${(kpis.overstockEur / 1_000_000).toFixed(1)} M€`, "Overstock")}
+          value={formatEurCompact(kpis.overstockEur)}
+          description={`${kpis.overstockPartsCount} parts`}
+          valueNode={kpiValue(formatEurCompact(kpis.overstockEur), "Overstock")}
         />
 
         <KpiCard
           title="Understock"
-          value={`${(kpis.understockEur / 1_000_000).toFixed(1)} M€`}
-          description={`${kpis.understockParts} parts`}
-          valueNode={kpiValue(`${(kpis.understockEur / 1_000_000).toFixed(1)} M€`, "Understock")}
+          value={hideUnderstock ? "—" : formatEurCompact(kpis.understockEur)}
+          description={hideUnderstock ? "0 parts" : `${kpis.understockPartsCount} parts`}
+          valueNode={kpiValue(
+            hideUnderstock ? "—" : formatEurCompact(kpis.understockEur),
+            "Understock"
+          )}
         />
 
       </div>
@@ -106,7 +159,23 @@ export function HealthRiskSection() {
         onClose={() => setOpen(false)}
         seeAllHref="/inventory/analytics"
       >
-        <PartbookTable filter={null} />
+        <PartbookTable
+          filter={null}
+          overrideParts={
+            activeKpi === "Overstock"
+              ? kpis.overstockParts
+              : activeKpi === "Understock"
+                ? kpis.understockParts
+                : undefined
+          }
+          valueLabel={
+            activeKpi === "Overstock"
+              ? "Overstock value"
+              : activeKpi === "Understock"
+                ? "Understock value"
+                : undefined
+          }
+        />
       </BottomSheetModal>
     </section>
   )

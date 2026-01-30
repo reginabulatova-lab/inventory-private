@@ -102,6 +102,12 @@ export function InventorySubnav() {
       return { from: dateRange.from, to: dateRange.to }
     }, [dateRange.from, dateRange.to])
 
+    const todayStart = React.useMemo(() => {
+      const d = new Date()
+      d.setHours(0, 0, 0, 0)
+      return d
+    }, [])
+
     React.useEffect(() => {
       if (timeframePreset !== "custom") setCustomOpen(false)
     }, [timeframePreset])
@@ -1144,13 +1150,38 @@ export function InventorySubnav() {
                             mode="range"
                             numberOfMonths={2}
                             selected={calendarRange}
-                            onSelect={(range) => {
-                              if (!range?.from) return
-                              setDateRange({ from: range.from, to: range.to })
+                            disabled={{ before: todayStart }}
+                            onDayClick={(day) => {
+                              const clicked = new Date(day)
+                              clicked.setHours(0, 0, 0, 0)
+
+                              if (clicked.getTime() < todayStart.getTime()) return
+
+                              if (!dateRange.from || (dateRange.from && dateRange.to)) {
+                                setDateRange({ from: clicked, to: undefined })
+                                setTimeframePreset("custom")
+                                return
+                              }
+
+                              const start = new Date(dateRange.from)
+                              start.setHours(0, 0, 0, 0)
+
+                              if (clicked.getTime() < start.getTime()) {
+                                setDateRange({ from: clicked, to: undefined })
+                                setTimeframePreset("custom")
+                                return
+                              }
+
+                              setDateRange({ from: start, to: clicked })
                               setTimeframePreset("custom")
-                              if (range.from && range.to) setCustomOpen(false)
+                              setCustomOpen(false)
                             }}
                           />
+                          {dateRange.from && !dateRange.to ? (
+                            <div className="px-4 pb-3 text-xs text-muted-foreground">
+                              Select an end date
+                            </div>
+                          ) : null}
                         </PopoverContent>
                       </Popover>
                     ) : null}
