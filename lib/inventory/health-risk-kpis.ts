@@ -113,8 +113,8 @@ function clampNonNegative(value: number) {
   return Math.max(0, value)
 }
 
-function safeNumber(value: number | undefined, fallback = 0) {
-  return Number.isFinite(value) ? value : fallback
+function safeNumber(value: unknown, fallback = 0): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback
 }
 
 function toValue(qty: number, unitValue: number) {
@@ -125,11 +125,11 @@ function toValue(qty: number, unitValue: number) {
 
 function projectedStockRaw(part: PartMetrics, from: Date, date: Date) {
   const days = diffDays(from, date)
-  const demand = safeNumber(part.demandPerDay, 0) * days
-  const supplyEvents = Math.floor((days + safeNumber(part.supplyOffsetDays, 0)) / 7)
-  const supply = safeNumber(part.weeklySupply, 0) * supplyEvents
-  const jitter = Math.round(Math.sin((days + part.seed) / 6) * safeNumber(part.volatility, 0))
-  return Math.round(safeNumber(part.currentStock, 0) - demand + supply + jitter)
+  const demand = part.demandPerDay * days
+  const supplyEvents = Math.floor((days + part.supplyOffsetDays) / 7)
+  const supply = part.weeklySupply * supplyEvents
+  const jitter = Math.round(Math.sin((days + part.seed) / 6) * part.volatility)
+  return Math.round(part.currentStock - demand + supply + jitter)
 }
 
 function buildProjectionSeries(part: PartMetrics, from: Date, to: Date) {
@@ -310,14 +310,17 @@ export function computeHealthRiskKpisFromParts(options: {
     }
   }
 
-  parts.forEach((part) => {
+  for (let i = 0; i < parts.length; i += 1) {
+    const part = parts[i]!
+
     const unitValue = Number.isFinite(part.unitValueEur) ? part.unitValueEur : isDev ? 1 : 0
     const inventoryStock =
       mode === "projection"
         ? getProjectedStockAt(part, from, to, to)
         : safeNumber(part.currentStock, 0)
-    warnIfInvalid(part, "inventoryStock", inventoryStock, mode === "projection" ? to : today)
-    const safeInventoryStock = clampNonNegative(inventoryStock)
+
+    warnIfInvalid(part, "inventoryStock", inventoryStock ?? 0, mode === "projection" ? to : today)
+    const safeInventoryStock = clampNonNegative(inventoryStock ?? 0)
     inventoryEur += toValue(safeInventoryStock, unitValue)
 
     const demandLeadTime = safeNumber(part.demandPerDay, 0) * safeNumber(part.leadTimeDays, 0)
@@ -328,9 +331,11 @@ export function computeHealthRiskKpisFromParts(options: {
       mode === "projection"
         ? getProjectedStockAt(part, from, to, stockEvalDate)
         : safeNumber(part.currentStock, 0)
-    warnIfInvalid(part, "evalStock", evalStock, stockEvalDate)
-    const safeEvalStock = clampNonNegative(evalStock)
+
+    warnIfInvalid(part, "evalStock", evalStock ?? 0, stockEvalDate)
+    const safeEvalStock = clampNonNegative(evalStock ?? 0)
     const overstockQty = Math.max(0, safeEvalStock - maxThreshold)
+
     if (overstockQty > 0) {
       rawOverstockParts.push({
         partName: part.partName,
@@ -354,7 +359,7 @@ export function computeHealthRiskKpisFromParts(options: {
         })
       }
     }
-  })
+  }
 
   if (mode === "snapshot") {
     rawUnderstockParts.length = 0
