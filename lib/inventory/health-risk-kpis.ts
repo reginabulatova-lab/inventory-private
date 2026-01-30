@@ -266,8 +266,9 @@ export function computeHealthRiskKpisFromParts(options: {
   rangeFrom: Date
   rangeTo: Date
   todayStart: Date
+  inventoryOverrideEur?: number
 }): HealthRiskKpis {
-  const { parts, mode, rangeFrom, rangeTo, todayStart } = options
+  const { parts, mode, rangeFrom, rangeTo, todayStart, inventoryOverrideEur } = options
   const from = startOfDay(rangeFrom)
   const to = startOfDay(rangeTo)
   const today = startOfDay(todayStart)
@@ -381,6 +382,10 @@ export function computeHealthRiskKpisFromParts(options: {
     for (const p of rawUnderstockParts) {
       p.contributionEur *= multiplier
     }
+  }
+
+  if (Number.isFinite(inventoryOverrideEur)) {
+    inventoryEur = inventoryOverrideEur as number
   }
 
   if (isDev) {

@@ -15,6 +15,11 @@ import {
   computeHealthRiskKpisFromParts,
   type HealthRiskKpis,
 } from "@/lib/inventory/health-risk-kpis"
+import {
+  buildProjectionOpps,
+  buildProjectionSeries,
+  getSeriesValueAt,
+} from "@/components/inventory/projection-series"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 
 function formatEurCompact(value: number) {
@@ -79,6 +84,49 @@ export function HealthRiskSection() {
     return buildPartMetrics(sources)
   }, [baseOpps, plan])
 
+  const projectionOpps = React.useMemo(
+    () =>
+      buildProjectionOpps({
+        opportunities,
+        plan,
+        filters,
+        escalationTickets,
+        rangeFrom,
+        rangeTo,
+      }),
+    [
+      opportunities,
+      plan,
+      filters,
+      escalationTickets,
+      rangeFrom,
+      rangeTo,
+      filters.partKeys,
+      filters.suggestedActions,
+      filters.customers,
+      filters.escLevels,
+      filters.statuses,
+    ]
+  )
+
+  const projectionSeries = React.useMemo(
+    () =>
+      buildProjectionSeries({
+        chartMode,
+        viewMode: "month",
+        opps: projectionOpps,
+        rangeFrom,
+        rangeTo,
+      }),
+    [chartMode, projectionOpps, rangeFrom, rangeTo]
+  )
+
+  const erpPoint = React.useMemo(() => getSeriesValueAt(projectionSeries, rangeTo), [
+    projectionSeries,
+    rangeTo,
+  ])
+  const inventoryOverrideEur = erpPoint ? erpPoint.erp * 1000 : undefined
+
   const kpis = React.useMemo<HealthRiskKpis>(
     () =>
       computeHealthRiskKpisFromParts({
@@ -87,9 +135,26 @@ export function HealthRiskSection() {
         rangeFrom,
         rangeTo,
         todayStart,
+        inventoryOverrideEur,
       }),
-    [parts, chartMode, rangeFrom, rangeTo, todayStart]
+    [parts, chartMode, rangeFrom, rangeTo, todayStart, inventoryOverrideEur]
   )
+
+  React.useEffect(() => {
+    if (process.env.NODE_ENV === "production") return
+    if (!erpPoint) return
+    if (erpPoint.erp * 1000 > 1_000_000 && kpis.inventoryEur < 100_000) {
+      console.warn("Inventory KPI seems too low vs chart ERP plan.", {
+        inventoryKpi: kpis.inventoryEur,
+        erpPlanEur: erpPoint.erp * 1000,
+        partsCount: parts.length,
+        avgUnitValue:
+          parts.length > 0
+            ? Math.round(parts.reduce((sum, p) => sum + p.unitValueEur, 0) / parts.length)
+            : 0,
+      })
+    }
+  }, [erpPoint, kpis.inventoryEur, parts])
 
   const hideUnderstock = chartMode === "snapshot"
 
