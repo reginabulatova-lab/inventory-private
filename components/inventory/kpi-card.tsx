@@ -42,16 +42,18 @@ export function WidgetCard({
   subtitle,
   children,
 }: WidgetCardProps) {
+  const isFullHeight = className?.includes("h-full")
   return (
     <div
       className={cn(
         "rounded-xl border border-border bg-white shadow-sm",
         "p-5",
         SizeClass(size),
+        isFullHeight && "flex flex-col",
         className
       )}
     >
-      <div className="flex items-start justify-between gap-3">
+      <div className="flex items-start justify-between gap-3 shrink-0">
         <div className="flex flex-col gap-2">
           <div className="flex items-center gap-2">
             {icon ? <div className="text-muted-foreground">{icon}</div> : null}
@@ -89,7 +91,9 @@ export function WidgetCard({
         {headerRight ? <div className="shrink-0">{headerRight}</div> : null}
       </div>
 
-      <div className="mt-4">{children}</div>
+      <div className={cn("mt-4", isFullHeight && "flex-1 min-h-0 flex flex-col")}>
+        {children}
+      </div>
     </div>
   )
 }

@@ -36,6 +36,7 @@ const TEAMS = ["Supply", "Production", "Customer Support"]
 const PLANTS = ["1123", "3535", "2041", "8810"]
 const BUYER_CODES = ["AV67", "TY82", "BN29"]
 const MRP_CODES = ["XJ45", "WM22", "QR98", "ZL16"]
+const STORAGE_LOCATIONS = ["Warehouse A", "Warehouse B", "Warehouse C", "Warehouse D"]
 
 function pick<T>(r: () => number, arr: T[]): T {
   return arr[Math.floor(r() * arr.length)]
@@ -53,9 +54,11 @@ function weightedStatus(r: () => number): OpportunityStatus {
 
 function weightedAction(r: () => number): SuggestedAction {
   const x = r()
-  if (x < 0.55) return "Push Out"
-  if (x < 0.8) return "Cancel"
-  return "Pull in"
+  if (x < 0.32) return "Push Out"
+  if (x < 0.55) return "Cancel"
+  if (x < 0.77) return "Pull in"
+  if (x < 0.9) return "STO"
+  return "Scrap/Sell"
 }
 
 function weightedEscLevel(r: () => number): 1 | 2 | 3 | 4 {
@@ -93,10 +96,11 @@ export function seedOpportunities(plan: Plan, count = 220): Opportunity[] {
     const status = weightedStatus(r)
     const escLevel = weightedEscLevel(r)
 
-    // ALT plan skew: more Pull-in actions
-    const action = plan === "ALT" ? (r() < 0.45 ? "Pull in" : weightedAction(r)) : weightedAction(r)
+    // ERP plan only in this prototype
+    const action = weightedAction(r)
 
     const supplyType = r() < 0.78 ? "PO" : "PR"
+    const leadTimeDays = Math.max(3, Math.round(5 + r() * 40))
     // 70% near-term (0-90 days), 30% anywhere in the next year
     const nearTerm = r() < 0.7
     const dayOffset = nearTerm ? Math.floor(r() * 90) : Math.floor(r() * horizonDays)
@@ -105,20 +109,97 @@ export function seedOpportunities(plan: Plan, count = 220): Opportunity[] {
     const deliveryDate =
       action === "Push Out"
         ? new Date(date.getTime() - deliveryOffsetDays * 86400000)
-        : date
+        : action === "STO" || action === "Scrap/Sell"
+          ? new Date(date.getTime() + deliveryOffsetDays * 86400000)
+          : date
 
-      // Keep opportunity values in a realistic 5k–150k range
-      const minImpact = 5_000
-      const maxImpact = 150_000
-      let cashImpactEur = Math.round(minImpact + r() * (maxImpact - minImpact))
+    // Keep opportunity values in a realistic 5k–150k range
+    const minImpact = 5_000
+    const maxImpact = 150_000
+    let cashImpactEur = Math.round(minImpact + r() * (maxImpact - minImpact))
+
+    const urgencyRoll = r()
+    let needDateOffsetDays = 0
+    if (urgencyRoll < 0.25) {
+      // critical: due very soon (or already late)
+      const offset = Math.floor(r() * 6) - 2 // -2..3
+      needDateOffsetDays = leadTimeDays + offset
+    } else if (urgencyRoll < 0.6) {
+      // medium: 7-14 days
+      needDateOffsetDays = leadTimeDays + (7 + Math.floor(r() * 8))
+    } else {
+      // longer-term: 30+ days
+      needDateOffsetDays = leadTimeDays + (30 + Math.floor(r() * 45))
+    }
+    const needDate = new Date(today.getTime() + needDateOffsetDays * 86400000)
+
+    const ageRoll = r()
+    let ageDays = 0
+    if (ageRoll < 0.25) {
+      ageDays = 2 + Math.floor(r() * 5) // 2-6d
+    } else if (ageRoll < 0.55) {
+      ageDays = 7 + Math.floor(r() * 12) // 7-18d
+    } else if (ageRoll < 0.8) {
+      ageDays = 19 + Math.floor(r() * 20) // 19-38d
+    } else {
+      ageDays = 45 + Math.floor(r() * 40) // 45-84d
+    }
+    const createdAt = new Date(today.getTime() - ageDays * 86400000)
+    const todoAt =
+      status !== "Backlog"
+        ? new Date(createdAt.getTime() + Math.max(0, Math.floor(r() * 2)) * 86400000)
+        : null
+    const startedAt =
+      status === "In Progress" || status === "Done"
+        ? new Date((todoAt ?? createdAt).getTime() + Math.max(0, Math.floor(r() * 6)) * 86400000)
+        : null
+    const completedAt =
+      status === "Done" && startedAt
+        ? new Date(startedAt.getTime() + Math.max(0, Math.floor(r() * Math.max(1, ageDays / 2))) * 86400000)
+        : null
 
     const assignee = status === "Backlog" ? "" : pick(r, ASSIGNEES)
     const team = status === "Backlog" ? "" : pick(r, TEAMS)
 
+    let currentStorageLocation: string | undefined
+    let targetStorageLocation: string | undefined
+    if (action === "STO") {
+      currentStorageLocation = pick(r, STORAGE_LOCATIONS)
+      const others = STORAGE_LOCATIONS.filter((loc) => loc !== currentStorageLocation)
+      targetStorageLocation = others.length > 0 ? pick(r, others) : STORAGE_LOCATIONS[0]
+    }
+
     out.push({
       id: `${plan.toLowerCase()}_opp_${i + 1}`,
       plan,
-      orderNumber: `PO-${10000 + i}`,
+      orderNumber: `${supplyType}-${10000 + i}`,
+      objectId: `${supplyType}-${20000 + i}`,
+      objectType: supplyType,
+      needDate: toISODate(needDate),
+      leadTimeDays,
+      createdAt: createdAt.toISOString(),
+      startedAt: startedAt ? startedAt.toISOString() : null,
+      completedAt: completedAt ? completedAt.toISOString() : null,
+      todoAt: todoAt ? todoAt.toISOString() : null,
+      inProgressAt: startedAt ? startedAt.toISOString() : null,
+      doneAt: completedAt ? completedAt.toISOString() : null,
+      statusHistory: [
+        { status: "Backlog" as OpportunityStatus, timestamp: createdAt.toISOString() },
+        ...(todoAt
+          ? [{ status: "To Do" as OpportunityStatus, timestamp: todoAt.toISOString() }]
+          : []),
+        ...(startedAt
+          ? [
+              {
+                status: "In Progress" as OpportunityStatus,
+                timestamp: startedAt.toISOString(),
+              },
+            ]
+          : []),
+        ...(completedAt
+          ? [{ status: "Done" as OpportunityStatus, timestamp: completedAt.toISOString() }]
+          : []),
+      ],
       partName: part.name,
       partNumber: part.number,
       suggestedAction: action,
@@ -135,6 +216,10 @@ export function seedOpportunities(plan: Plan, count = 220): Opportunity[] {
       mrpCode,
       supplyType,
       cashImpactEur,
+      ...(action === "STO" && {
+        currentStorageLocation,
+        targetStorageLocation,
+      }),
     })
   }
 

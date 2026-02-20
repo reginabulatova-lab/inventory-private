@@ -12,6 +12,7 @@ export const TOP_10_PROGRAMS = [
     "At Vendor",
     "Excluded",
     "Blocked",
+    "Excess",
   ] as const
   
   export const WIP_CATEGORIES = [

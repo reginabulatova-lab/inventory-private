@@ -2,8 +2,6 @@
 
 import * as React from "react"
 import { useSearchParams } from "next/navigation"
-import { PieBreakdown, PieDatum } from "@/components/inventory/pie-breakdown"
-import { WidgetCard } from "@/components/inventory/kpi-card"
 import {
   OpportunitiesTable,
   type OpportunitiesTableFilter,
@@ -18,9 +16,18 @@ import {
   getOpportunityMode,
 } from "@/lib/inventory/selectors"
 import type { Opportunity } from "@/lib/inventory/types"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 
 const FILTER_KINDS = ["type", "status", "concentration"] as const
 type FilterKind = (typeof FILTER_KINDS)[number]
+
+export type OpportunityTypeView = "standard" | "sto" | "scrap-sell"
+
+const OPPORTUNITY_TYPE_TABS: { value: OpportunityTypeView; label: string }[] = [
+  { value: "standard", label: "Pull in, Push out & Cancel" },
+  { value: "sto", label: "STO" },
+  { value: "scrap-sell", label: "Scrap/Sell" },
+]
 
 export function OpportunitiesPageContent() {
   const { dateRange } = useInventoryData()
@@ -29,9 +36,6 @@ export function OpportunitiesPageContent() {
   const searchParams = useSearchParams()
   const filterKind = searchParams.get("oppFilterKind")
   const filterCategory = searchParams.get("oppFilter")
-  const [statusFilter, setStatusFilter] = React.useState<Opportunity["status"] | null>(null)
-  const [teamFilter, setTeamFilter] = React.useState<string | null>(null)
-
   const filter = React.useMemo<OpportunitiesTableFilter | undefined>(() => {
     if (!filterKind || !filterCategory) return undefined
     if (!FILTER_KINDS.includes(filterKind as FilterKind)) return undefined
@@ -57,88 +61,28 @@ export function OpportunitiesPageContent() {
     [scopedAll]
   )
 
-  const statusData = React.useMemo<PieDatum[]>(() => {
-    const totals = rows.reduce((acc, r) => {
-      acc[r.status] = (acc[r.status] ?? 0) + r.inventoryValueEur
-      return acc
-    }, {} as Record<string, number>)
-    const statuses: Opportunity["status"][] = [
-      "Backlog",
-      "To Do",
-      "In Progress",
-      "Done",
-      "Canceled",
-      "Snoozed",
-    ]
-    const colors = ["#2563EB", "#06B6D4", "#F59E0B", "#22C55E", "#EF4444", "#9CA3AF"]
-    return statuses.map((status, idx) => ({
-      name: status,
-      value: totals[status] ?? 0,
-      displayValue: formatEurCompact(totals[status] ?? 0),
-      color: colors[idx % colors.length],
-    }))
-  }, [rows])
-
-  const teamData = React.useMemo<PieDatum[]>(() => {
-    const totals = rows.reduce((acc, r) => {
-      const team = r.team || "Unassigned"
-      acc[team] = (acc[team] ?? 0) + r.inventoryValueEur
-      return acc
-    }, {} as Record<string, number>)
-    const teams = Object.keys(totals).sort()
-    const colors = ["#2563EB", "#06B6D4", "#F59E0B", "#22C55E", "#A855F7"]
-    return teams.map((team, idx) => ({
-      name: team,
-      value: totals[team] ?? 0,
-      displayValue: formatEurCompact(totals[team] ?? 0),
-      color: colors[idx % colors.length],
-    }))
-  }, [rows])
-
-  const statusTotal = formatEurCompact(statusData.reduce((sum, r) => sum + r.value, 0))
-  const teamTotal = formatEurCompact(teamData.reduce((sum, r) => sum + r.value, 0))
-  const statusSelected = statusFilter ?? (teamFilter ? "__external__" : null)
-  const teamSelected = teamFilter ?? (statusFilter ? "__external__" : null)
-
   return (
     <div className="space-y-6">
-      <div className="grid grid-cols-12 gap-6">
-        <WidgetCard title="Status distribution" size="m" className="col-span-12 lg:col-span-6">
-          <PieBreakdown
-            totalLabel="Total"
-            totalValue={statusTotal}
-            data={statusData}
-            selectedCategory={statusSelected}
-            onSelectCategory={(category) => {
-              setStatusFilter((prev) =>
-                prev === category ? null : (category as Opportunity["status"])
-              )
-              setTeamFilter(null)
-            }}
-          />
-        </WidgetCard>
-        <WidgetCard title="Team distribution" size="m" className="col-span-12 lg:col-span-6">
-          <PieBreakdown
-            totalLabel="Total"
-            totalValue={teamTotal}
-            data={teamData}
-            selectedCategory={teamSelected}
-            onSelectCategory={(category) => {
-              setTeamFilter((prev) => (prev === category ? null : category))
-              setStatusFilter(null)
-            }}
-          />
-        </WidgetCard>
-      </div>
-
-      <OpportunitiesTable
-        filter={filter}
-        showToolbar
-        showSummary={false}
-        statusFilter={statusFilter}
-        teamFilter={teamFilter === "Unassigned" ? "" : teamFilter}
-        useRawInventoryValue
-      />
+      <Tabs defaultValue="standard" className="w-full">
+        <TabsList className="mb-4">
+          {OPPORTUNITY_TYPE_TABS.map((tab) => (
+            <TabsTrigger key={tab.value} value={tab.value}>
+              {tab.label}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+        {OPPORTUNITY_TYPE_TABS.map((tab) => (
+          <TabsContent key={tab.value} value={tab.value} className="mt-0">
+            <OpportunitiesTable
+              filter={filter}
+              showToolbar
+              showSummary={false}
+              useRawInventoryValue
+              opportunityTypeView={tab.value}
+            />
+          </TabsContent>
+        ))}
+      </Tabs>
     </div>
   )
 }

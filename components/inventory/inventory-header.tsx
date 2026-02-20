@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import Image from "next/image";
-import { usePathname, useRouter } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Bell, ChevronDown, Database, Menu, Search } from "lucide-react";
 
@@ -11,9 +11,16 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuLabel,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { cn } from "@/lib/utils";
+import { useInventoryData, type InventoryUserId } from "@/components/inventory/inventory-data-provider";
+
+const USERS = [
+  { id: "leader", label: "Inventory Leader" },
+  { id: "manager", label: "Inventory Manager" },
+  { id: "supplyOfficer", label: "Supply Officer" },
+] as const;
 
 function VDivider() {
   return (
@@ -24,20 +31,17 @@ function VDivider() {
   );
 }
 
+function getInitials(userId: InventoryUserId) {
+  if (userId === "leader") return "IL";
+  if (userId === "manager") return "IM";
+  if (userId === "supplyOfficer") return "SO";
+  return "IL";
+}
+
 export function InventoryHeader() {
   const router = useRouter();
-  const pathname = usePathname();
-
-  const isAlternativePlan = pathname?.startsWith("/inventory/alternative-plan");
-
-  const planTitle = isAlternativePlan ? "Alternative plan" : "ERP plan";
-
-  const primarySwitchLabel = isAlternativePlan ? "ERP plan" : "Alternative plan";
-  const primarySwitchHref = isAlternativePlan
-    ? "/inventory/control-tower"
-    : "/inventory/alternative-plan";
-
-  const simulationItem = isAlternativePlan ? "Simulation 1" : "Ramp Up Optimization";
+  const planTitle = "ERP plan";
+  const { currentUser, setCurrentUser } = useInventoryData();
 
   return (
     <header className="sticky top-0 z-50 w-full h-[48px] border-b bg-background">
@@ -65,9 +69,10 @@ export function InventoryHeader() {
           <div className="flex items-center gap-3">
             <span className="text-sm font-semibold text-foreground">Inventory</span>
             <DropdownMenu>
-              <DropdownMenuTrigger asChild>
+              <DropdownMenuTrigger asChild id="inventory-plan-menu-trigger">
                 <Button
                   variant="ghost"
+                  id="inventory-plan-menu-trigger"
                   className="h-8 px-2 gap-2 text-sm font-medium"
                 >
                   <Database className="h-4 w-4 text-muted-foreground" />
@@ -77,34 +82,59 @@ export function InventoryHeader() {
               </DropdownMenuTrigger>
 
               <DropdownMenuContent align="start" className="min-w-64">
-                <DropdownMenuItem onClick={() => router.push(primarySwitchHref)}>
-                  {primarySwitchLabel}
+                <DropdownMenuLabel className="text-xs text-muted-foreground">PLANS</DropdownMenuLabel>
+                <DropdownMenuItem onClick={() => router.push("/inventory/control-tower")}>
+                  ERP plan
                 </DropdownMenuItem>
-
-                <DropdownMenuSeparator />
-
-                <DropdownMenuLabel className="text-xs text-muted-foreground">
-                  SAVED SIMULATIONS
-                </DropdownMenuLabel>
-
-                <DropdownMenuItem>{simulationItem}</DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
 
         </div>
 
-        {/* Right aligned container (no segmented control, one separator removed) */}
+        {/* Right aligned container */}
         <div className="flex items-center gap-3">
           <Button variant="ghost" size="icon" aria-label="Search">
             <Search className="h-5 w-5" />
           </Button>
 
-          <VDivider />
-
           <Button variant="ghost" size="icon" aria-label="Notifications">
             <Bell className="h-5 w-5" />
           </Button>
+
+          <VDivider />
+
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                className="flex h-8 w-8 items-center justify-center rounded-full bg-teal-100 text-teal-700 ring-1 ring-teal-200 transition-opacity hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-teal-500 focus:ring-offset-2"
+                aria-label="Current user"
+              >
+                <span className="text-xs font-semibold">{getInitials(currentUser)}</span>
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="min-w-[200px]">
+              <DropdownMenuLabel className="text-xs text-muted-foreground">
+                Switch user
+              </DropdownMenuLabel>
+              {USERS.map((user) => (
+                <DropdownMenuItem
+                  key={user.id}
+                  onClick={() => setCurrentUser(user.id)}
+                  className={cn(
+                    "gap-2",
+                    currentUser === user.id && "bg-accent font-medium"
+                  )}
+                >
+                  <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-teal-100 text-xs font-semibold text-teal-700">
+                    {getInitials(user.id)}
+                  </span>
+                  {user.label}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </div>
     </header>

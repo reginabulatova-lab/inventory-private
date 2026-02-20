@@ -1,4 +1,4 @@
-export type Plan = "ERP" | "ALT"
+export type Plan = "ERP"
 
 export type OpportunityStatus =
   | "Backlog"
@@ -7,7 +7,18 @@ export type OpportunityStatus =
   | "Done"
   | "Canceled"
   | "Snoozed"
-export type SuggestedAction = "Pull in" | "Cancel" | "Push Out"
+export type SuggestedAction = "Pull in" | "Cancel" | "Push Out" | "STO" | "Scrap/Sell"
+
+/** All opportunity types in display order (filter + widgets). */
+export const OPPORTUNITY_TYPE_OPTIONS: SuggestedAction[] = [
+  "Push Out",
+  "Cancel",
+  "Pull in",
+  "STO",
+  "Scrap/Sell",
+]
+
+export type OpportunityPriority = "P1" | "P2" | "P3" | "P4"
 
 /**
  * Single source of truth for opportunities used across the app.
@@ -19,6 +30,17 @@ export type Opportunity = {
 
   // Opportunities page fields
   orderNumber: string
+  objectId: string
+  objectType: "PO" | "PR"
+  needDate: string // ISO date (YYYY-MM-DD)
+  leadTimeDays: number
+  createdAt: string
+  startedAt?: string | null
+  completedAt?: string | null
+  todoAt?: string | null
+  inProgressAt?: string | null
+  doneAt?: string | null
+  statusHistory?: { status: OpportunityStatus; timestamp: string }[]
   partName: string
   partNumber: string
   suggestedAction: SuggestedAction
@@ -27,6 +49,7 @@ export type Opportunity = {
   status: OpportunityStatus
   assignee: string
   team: string
+  priority?: OpportunityPriority
 
   // Extra fields used by Control Tower table / widgets later
   supplier: string
@@ -37,6 +60,10 @@ export type Opportunity = {
   mrpCode: string
   supplyType: "PO" | "PR"
   cashImpactEur: number // numeric so widgets can aggregate
+
+  // STO-specific (for suggestedAction === "STO")
+  currentStorageLocation?: string
+  targetStorageLocation?: string
 
   snoozeRuleIds?: string[]
   prevStatus?: OpportunityStatus

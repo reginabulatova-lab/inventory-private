@@ -1,7 +1,7 @@
 import { applyOpportunityFilters } from "@/components/inventory/inventory-data-provider"
 import type { Opportunity } from "@/lib/inventory/types"
 
-export type ProjectionViewMode = "month" | "quarter"
+export type ProjectionViewMode = "month" | "quarter" | "week" | "day"
 export type ProjectionChartMode = "snapshot" | "projection"
 
 type OppInput = { suggestedDate: string; cashImpactEur: number }
@@ -182,6 +182,7 @@ export function buildProjectionSeries(options: {
   rangeTo: Date
 }): ProjectionPoint[] {
   const { chartMode, viewMode, opps, rangeFrom, rangeTo } = options
+  const effectiveViewMode = viewMode === "week" || viewMode === "day" ? "month" : viewMode
 
   if (chartMode === "snapshot") {
     const oppK = Math.round(
@@ -191,7 +192,7 @@ export function buildProjectionSeries(options: {
     const monthIndex = rangeFrom.getMonth()
     const quarterIndex = Math.floor(monthIndex / 3)
     const erpBase =
-      viewMode === "month"
+      effectiveViewMode === "month"
         ? ERP_MONTH_TEMPLATE[monthIndex % ERP_MONTH_TEMPLATE.length]
         : ERP_QUARTER_TEMPLATE[quarterIndex % ERP_QUARTER_TEMPLATE.length]
     const target = Math.max(Math.round(oppK * 1.08), oppK + 15)
@@ -207,7 +208,7 @@ export function buildProjectionSeries(options: {
     ]
   }
 
-  if (viewMode === "month") {
+  if (effectiveViewMode === "month") {
     const rows = buildMonthSeries(rangeFrom, rangeTo, opps)
     return rows.map((row) => {
       const oppK = Math.round(row.oppEur / 1000)

@@ -18,6 +18,11 @@ export type OpportunityFilters = {
   customers: string[]
   escLevels: Opportunity["escLevel"][]
   statuses: Opportunity["status"][]
+  suggestedDateRange: DateRange
+  timeToAct: ("late" | "lt7" | "lt14" | "gte14")[]
+  ageRanges: ("lt7" | "d7to14" | "d15to30" | "gt30")[]
+  timeToStartRanges: ("lt3" | "d3to7" | "d8to14" | "gt14")[]
+  inProgressRanges: ("lt7" | "d7to14" | "d15to21" | "gt21")[]
   plants: string[]
   buyerCodes: string[]
   mrpCodes: string[]
@@ -93,6 +98,60 @@ function normalizeDeliveryDate(o: Opportunity) {
     return fallbackDeliveryDate(o.suggestedAction, o.suggestedDate)
   }
   return o.deliveryDate
+}
+
+function fallbackLeadTimeDays(id: string) {
+  let hash = 0
+  for (let i = 0; i < id.length; i += 1) {
+    hash = (hash * 31 + id.charCodeAt(i)) | 0
+  }
+  return Math.max(3, 5 + (Math.abs(hash) % 41))
+}
+
+function fallbackNeedDate(suggestedDate: string, leadTimeDays: number) {
+  const suggested = new Date(suggestedDate)
+  if (!Number.isFinite(suggested.getTime())) return suggestedDate
+  const offset = Math.max(5, Math.round(leadTimeDays + 10))
+  const d = new Date(suggested.getTime() + offset * 86400000)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
+    d.getDate()
+  ).padStart(2, "0")}`
+}
+
+function fallbackCreatedAt(id: string) {
+  const now = new Date()
+  let hash = 0
+  for (let i = 0; i < id.length; i += 1) {
+    hash = (hash * 31 + id.charCodeAt(i)) | 0
+  }
+  const ageDays = 3 + (Math.abs(hash) % 75)
+  return new Date(now.getTime() - ageDays * 86400000).toISOString()
+}
+
+function fallbackStartedAt(createdAt: string, status: Opportunity["status"]) {
+  if (status !== "In Progress" && status !== "Done") return null
+  const created = new Date(createdAt)
+  if (!Number.isFinite(created.getTime())) return null
+  const started = new Date(created.getTime() + 2 * 86400000)
+  return started.toISOString()
+}
+
+function fallbackCompletedAt(startedAt: string | null, status: Opportunity["status"]) {
+  if (status !== "Done" || !startedAt) return null
+  const started = new Date(startedAt)
+  if (!Number.isFinite(started.getTime())) return null
+  const completed = new Date(started.getTime() + 3 * 86400000)
+  return completed.toISOString()
+}
+
+function ensureStatusHistory(o: Opportunity) {
+  if (o.statusHistory?.length) return o.statusHistory
+  const history: { status: Opportunity["status"]; timestamp: string }[] = []
+  if (o.createdAt) history.push({ status: "Backlog", timestamp: o.createdAt })
+  if (o.todoAt) history.push({ status: "To Do", timestamp: o.todoAt })
+  if (o.inProgressAt) history.push({ status: "In Progress", timestamp: o.inProgressAt })
+  if (o.doneAt) history.push({ status: "Done", timestamp: o.doneAt })
+  return history
 }
 
 function autoAssignByMrp(o: Opportunity) {
@@ -173,8 +232,12 @@ export function rangeFromPreset(key: PresetKey, baseNow?: Date): DateRange {
   return { from: startOfDay(now), to: endOfDay(endOfYear(now)) }
 }
 
+export type InventoryUserId = "leader" | "manager" | "supplyOfficer"
+
 // ---------- Context ----------
 type InventoryDataContextValue = {
+  currentUser: InventoryUserId
+  setCurrentUser: React.Dispatch<React.SetStateAction<InventoryUserId>>
   plan: Plan
 
   dateRange: DateRange
@@ -191,6 +254,7 @@ type InventoryDataContextValue = {
   setAssigneeByIds: (ids: string[], assignee: Opportunity["assignee"]) => void
   setTeamByIds: (ids: string[], team: Opportunity["team"]) => void
   setDeliveryDateByIds: (ids: string[], deliveryDate: Opportunity["deliveryDate"]) => void
+  setPriorityByIds: (ids: string[], priority: Opportunity["priority"]) => void
   applyPushOutByIds: (ids: string[]) => void
 
   escalationTickets: Record<string, EscalationTicket | undefined>
@@ -213,18 +277,17 @@ type InventoryDataContextValue = {
 
 const InventoryDataContext = React.createContext<InventoryDataContextValue | null>(null)
 
-const LS_KEY = "inventory_opportunities_v1"
+const LS_KEY = "inventory_opportunities_v4"
 const LS_RULES_KEY = "inventory_snooze_rules_v1"
 const LS_TICKETS_KEY = "inventory_escalation_tickets_v1"
 
-function planFromPath(pathname: string | null): Plan {
-  if (!pathname) return "ERP"
-  return pathname.startsWith("/inventory/alternative-plan") ? "ALT" : "ERP"
+function planFromPath(_pathname: string | null): Plan {
+  return "ERP"
 }
 
 function loadInitial(): Opportunity[] {
   // Deterministic, same in all environments
-  return [...seedOpportunities("ERP"), ...seedOpportunities("ALT")]
+  return seedOpportunities("ERP")
 }
 
 export function InventoryDataProvider({ children }: { children: React.ReactNode }) {
@@ -236,6 +299,7 @@ export function InventoryDataProvider({ children }: { children: React.ReactNode 
   if (!nowRef.current) nowRef.current = new Date()
   const now = nowRef.current
 
+  const [currentUser, setCurrentUser] = React.useState<InventoryUserId>("leader")
   const [opportunities, setOpportunities] = React.useState<Opportunity[]>(() => loadInitial())
   const [filters, setFilters] = React.useState<OpportunityFilters>({
     partKeys: [],
@@ -243,6 +307,11 @@ export function InventoryDataProvider({ children }: { children: React.ReactNode 
     customers: [],
     escLevels: [],
     statuses: [],
+    suggestedDateRange: { from: undefined, to: undefined },
+    timeToAct: [],
+    ageRanges: [],
+    timeToStartRanges: [],
+    inProgressRanges: [],
     plants: [],
     buyerCodes: [],
     mrpCodes: [],
@@ -253,8 +322,8 @@ export function InventoryDataProvider({ children }: { children: React.ReactNode 
   >({})
 
   // ✅ single source of truth for timeframe preset + range (derived from stable now)
-  const [timeframePreset, setTimeframePreset] = React.useState<PresetKey>("current")
-  const [dateRange, setDateRange] = React.useState<DateRange>(() => rangeFromPreset("current", now))
+  const [timeframePreset, setTimeframePreset] = React.useState<PresetKey>("eoy")
+  const [dateRange, setDateRange] = React.useState<DateRange>(() => rangeFromPreset("eoy", now))
 
   // ✅ when preset changes, derive the range from the same stable "now"
   React.useEffect(() => {
@@ -270,7 +339,7 @@ export function InventoryDataProvider({ children }: { children: React.ReactNode 
       if (!raw) return
       const parsed = JSON.parse(raw)
       if (Array.isArray(parsed)) {
-        const normalized = (parsed as Opportunity[]).map((o) => ({
+        const normalized = (parsed as Opportunity[]).map((o, idx) => ({
           ...o,
           customer: o.customer ?? o.supplier ?? "—",
           escLevel: o.escLevel ?? 1,
@@ -286,6 +355,35 @@ export function InventoryDataProvider({ children }: { children: React.ReactNode 
           assignee: normalizeAssignee(o.assignee),
           team: o.team ?? "",
           deliveryDate: normalizeDeliveryDate(o),
+          objectId: o.objectId ?? `${o.supplyType ?? "PO"}-${10000 + idx}`,
+          objectType: (o.objectType ?? o.supplyType ?? "PO") as Opportunity["objectType"],
+          leadTimeDays: o.leadTimeDays ?? fallbackLeadTimeDays(o.id),
+          needDate:
+            o.needDate ?? fallbackNeedDate(o.suggestedDate, o.leadTimeDays ?? fallbackLeadTimeDays(o.id)),
+          createdAt: o.createdAt ?? fallbackCreatedAt(o.id),
+          startedAt: o.startedAt ?? fallbackStartedAt(o.createdAt ?? fallbackCreatedAt(o.id), o.status),
+          completedAt:
+            o.completedAt ??
+            fallbackCompletedAt(
+              o.startedAt ?? fallbackStartedAt(o.createdAt ?? fallbackCreatedAt(o.id), o.status),
+              o.status
+            ),
+          todoAt: o.todoAt ?? (o.status !== "Backlog" ? o.createdAt ?? fallbackCreatedAt(o.id) : null),
+          inProgressAt:
+            o.inProgressAt ??
+            (o.status === "In Progress" || o.status === "Done"
+              ? o.startedAt ?? fallbackStartedAt(o.createdAt ?? fallbackCreatedAt(o.id), o.status)
+              : null),
+          doneAt:
+            o.doneAt ??
+            (o.status === "Done"
+              ? o.completedAt ??
+                fallbackCompletedAt(
+                  o.startedAt ?? fallbackStartedAt(o.createdAt ?? fallbackCreatedAt(o.id), o.status),
+                  o.status
+                )
+              : null),
+          statusHistory: ensureStatusHistory(o),
           snoozeRuleIds: o.snoozeRuleIds ?? [],
           prevStatus: o.prevStatus,
         }))
@@ -350,11 +448,53 @@ export function InventoryDataProvider({ children }: { children: React.ReactNode 
     setOpportunities((prev) =>
       prev.map((o) => {
         if (!ids.includes(o.id)) return o
+        const now = new Date().toISOString()
+        const history = o.statusHistory ? [...o.statusHistory] : []
+        const pushHistory = (nextStatus: Opportunity["status"]) => {
+          if (!history.some((h) => h.status === nextStatus)) {
+            history.push({ status: nextStatus, timestamp: now })
+          }
+        }
         if (status === "To Do") {
           const assignment = autoAssignByMrp(o)
           const nextAssignee = o.assignee || assignment.assignee
           const nextTeam = o.team || ASSIGNEE_TEAMS[nextAssignee] || assignment.team
-          return { ...o, status, assignee: nextAssignee, team: nextTeam }
+          pushHistory("To Do")
+          return {
+            ...o,
+            status,
+            assignee: nextAssignee,
+            team: nextTeam,
+            todoAt: o.todoAt ?? now,
+            statusHistory: history,
+          }
+        }
+        if (status === "In Progress") {
+          const baseTodoAt = o.todoAt ?? o.createdAt ?? now
+          pushHistory("In Progress")
+          return {
+            ...o,
+            status,
+            todoAt: o.todoAt ?? baseTodoAt,
+            inProgressAt: o.inProgressAt ?? now,
+            startedAt: o.startedAt ?? now,
+            statusHistory: history,
+          }
+        }
+        if (status === "Done") {
+          const baseTodoAt = o.todoAt ?? o.createdAt ?? now
+          const baseInProgressAt = o.inProgressAt ?? o.startedAt ?? baseTodoAt
+          pushHistory("Done")
+          return {
+            ...o,
+            status,
+            todoAt: o.todoAt ?? baseTodoAt,
+            inProgressAt: o.inProgressAt ?? baseInProgressAt,
+            startedAt: o.startedAt ?? baseInProgressAt,
+            doneAt: o.doneAt ?? now,
+            completedAt: o.completedAt ?? now,
+            statusHistory: history,
+          }
         }
         return { ...o, status }
       })
@@ -387,15 +527,25 @@ export function InventoryDataProvider({ children }: { children: React.ReactNode 
           if (!ids.includes(o.id)) return o
           if (o.status !== "Snoozed") return o
           const nextStatus = o.prevStatus ?? "To Do"
+          const now = new Date().toISOString()
+          const history = o.statusHistory ? [...o.statusHistory] : []
+          const pushHistory = (nextStatusInner: Opportunity["status"]) => {
+            if (!history.some((h) => h.status === nextStatusInner)) {
+              history.push({ status: nextStatusInner, timestamp: now })
+            }
+          }
           if (nextStatus === "To Do") {
             const assignment = autoAssignByMrp(o)
+            pushHistory("To Do")
             return {
               ...o,
               status: nextStatus,
               assignee: o.assignee || assignment.assignee,
               team: o.team || assignment.team,
+              todoAt: o.todoAt ?? now,
               prevStatus: undefined,
               snoozeRuleIds: [],
+              statusHistory: history,
             }
           }
           return {
@@ -403,6 +553,7 @@ export function InventoryDataProvider({ children }: { children: React.ReactNode 
             status: nextStatus,
             prevStatus: undefined,
             snoozeRuleIds: [],
+            statusHistory: history,
           }
         })
       )
@@ -415,6 +566,13 @@ export function InventoryDataProvider({ children }: { children: React.ReactNode 
     setOpportunities((prev) =>
       prev.map((o) => {
         if (!ids.includes(o.id)) return o
+        const now = new Date().toISOString()
+        const history = o.statusHistory ? [...o.statusHistory] : []
+        const pushHistory = (nextStatus: Opportunity["status"]) => {
+          if (!history.some((h) => h.status === nextStatus)) {
+            history.push({ status: nextStatus, timestamp: now })
+          }
+        }
         if (status === "Snoozed") {
           if (o.status === "Snoozed") return o
           return {
@@ -427,13 +585,47 @@ export function InventoryDataProvider({ children }: { children: React.ReactNode 
           const assignment = autoAssignByMrp(o)
           const nextAssignee = o.assignee || assignment.assignee
           const nextTeam = o.team || ASSIGNEE_TEAMS[nextAssignee] || assignment.team
+          pushHistory("To Do")
           return {
             ...o,
             status,
             assignee: nextAssignee,
             team: nextTeam,
+            todoAt: o.todoAt ?? now,
             prevStatus: undefined,
             snoozeRuleIds: [],
+            statusHistory: history,
+          }
+        }
+        if (status === "In Progress") {
+          const baseTodoAt = o.todoAt ?? o.createdAt ?? now
+          pushHistory("In Progress")
+          return {
+            ...o,
+            status,
+            todoAt: o.todoAt ?? baseTodoAt,
+            inProgressAt: o.inProgressAt ?? now,
+            startedAt: o.startedAt ?? now,
+            prevStatus: undefined,
+            snoozeRuleIds: [],
+            statusHistory: history,
+          }
+        }
+        if (status === "Done") {
+          const baseTodoAt = o.todoAt ?? o.createdAt ?? now
+          const baseInProgressAt = o.inProgressAt ?? o.startedAt ?? baseTodoAt
+          pushHistory("Done")
+          return {
+            ...o,
+            status,
+            todoAt: o.todoAt ?? baseTodoAt,
+            inProgressAt: o.inProgressAt ?? baseInProgressAt,
+            startedAt: o.startedAt ?? baseInProgressAt,
+            doneAt: o.doneAt ?? now,
+            completedAt: o.completedAt ?? now,
+            prevStatus: undefined,
+            snoozeRuleIds: [],
+            statusHistory: history,
           }
         }
         return {
@@ -461,6 +653,16 @@ export function InventoryDataProvider({ children }: { children: React.ReactNode 
       if (ids.length === 0) return
       setOpportunities((prev) =>
         prev.map((o) => (ids.includes(o.id) ? { ...o, deliveryDate } : o))
+      )
+    },
+    []
+  )
+
+  const setPriorityByIds = React.useCallback(
+    (ids: string[], priority: Opportunity["priority"]) => {
+      if (ids.length === 0) return
+      setOpportunities((prev) =>
+        prev.map((o) => (ids.includes(o.id) ? { ...o, priority } : o))
       )
     },
     []
@@ -543,6 +745,8 @@ export function InventoryDataProvider({ children }: { children: React.ReactNode 
 
   const value = React.useMemo<InventoryDataContextValue>(
     () => ({
+      currentUser,
+      setCurrentUser,
       plan,
       dateRange,
       setDateRange,
@@ -556,6 +760,7 @@ export function InventoryDataProvider({ children }: { children: React.ReactNode 
       setAssigneeByIds,
       setTeamByIds,
       setDeliveryDateByIds,
+      setPriorityByIds,
       applyPushOutByIds,
       escalationTickets,
       upsertEscalationTicket,
@@ -569,6 +774,11 @@ export function InventoryDataProvider({ children }: { children: React.ReactNode 
           customers: [],
           escLevels: [],
           statuses: [],
+          suggestedDateRange: { from: undefined, to: undefined },
+          timeToAct: [],
+          ageRanges: [],
+          timeToStartRanges: [],
+          inProgressRanges: [],
           plants: [],
           buyerCodes: [],
           mrpCodes: [],
@@ -578,6 +788,7 @@ export function InventoryDataProvider({ children }: { children: React.ReactNode 
       removeSnoozeRule,
     }),
     [
+      currentUser,
       plan,
       dateRange,
       timeframePreset,
@@ -589,6 +800,7 @@ export function InventoryDataProvider({ children }: { children: React.ReactNode 
       setAssigneeByIds,
       setTeamByIds,
       setDeliveryDateByIds,
+      setPriorityByIds,
       applyPushOutByIds,
       escalationTickets,
       upsertEscalationTicket,
@@ -647,6 +859,21 @@ export function applyOpportunityFilters(
   if (filters.mrpCodes.length > 0) {
     res = res.filter((o) => filters.mrpCodes.includes(o.mrpCode))
   }
+  if (filters.suggestedDateRange.from || filters.suggestedDateRange.to) {
+    const from = filters.suggestedDateRange.from
+      ? new Date(filters.suggestedDateRange.from)
+      : null
+    const to = filters.suggestedDateRange.to ? new Date(filters.suggestedDateRange.to) : null
+    if (from) from.setHours(0, 0, 0, 0)
+    if (to) to.setHours(23, 59, 59, 999)
+    const fromMs = from ? from.getTime() : -Infinity
+    const toMs = to ? to.getTime() : Infinity
+    res = res.filter((o) => {
+      const t = new Date(o.suggestedDate).getTime()
+      if (!Number.isFinite(t)) return false
+      return t >= fromMs && t <= toMs
+    })
+  }
   return res
 }
 
@@ -699,6 +926,7 @@ export function useFilteredOpportunities(options?: { includeSnoozed?: boolean })
     filters.customers,
     filters.escLevels,
     filters.statuses,
+    filters.suggestedDateRange,
     filters.plants,
     filters.buyerCodes,
     filters.mrpCodes,

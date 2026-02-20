@@ -235,7 +235,8 @@ function buildMockParts(parts: PartSource[]): PartRow[] {
 
 function buildMockRowsForParts(parts: PartSource[]): PartRow[] {
   if (parts.length === 0) return buildMockParts(parts)
-  return parts.map((part, i) => buildMockRow(part, i, part.partNumber))
+  // Ensure stable unique ids even if partNumber repeats (can happen in demo datasets / overrides).
+  return parts.map((part, i) => buildMockRow(part, i, `${part.partNumber}__${i}`))
 }
   
 /**

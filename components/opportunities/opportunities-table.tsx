@@ -1,14 +1,21 @@
 "use client"
 
 import * as React from "react"
+import { useSearchParams } from "next/navigation"
 import { format } from "date-fns"
 import {
   applyOpportunityFilters,
   useFilteredOpportunities,
   useInventoryData,
   type EscalationTicket,
+  type OpportunityFilters,
 } from "@/components/inventory/inventory-data-provider"
-import type { Opportunity } from "@/lib/inventory/types"
+import type { Opportunity, OpportunityPriority } from "@/lib/inventory/types"
+import {
+  calcTimeToActDays,
+  PRIORITY_ORDER,
+  resolveOpportunityPriority,
+} from "@/lib/inventory/priority"
 import {
   buildConcentrationBuckets,
   capOpportunitiesTotal,
@@ -25,6 +32,7 @@ import {
   ArrowDown,
   ArrowRight,
   Check,
+  ChevronDown,
   CircleCheckBig,
   CircleDashed,
   CircleDotDashed,
@@ -58,14 +66,21 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { Separator } from "@/components/ui/separator"
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { Calendar } from "@/components/ui/calendar"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { cn } from "@/lib/utils"
 
 export type OpportunitiesTableFilter =
   | { kind: "type"; category: string }
   | { kind: "status"; category: string }
   | { kind: "concentration"; category: string }
+  | { kind: "priority"; category: OpportunityPriority }
   | null
+
+export type OpportunityTypeView = "standard" | "sto" | "scrap-sell"
+
+const STANDARD_ACTIONS: Opportunity["suggestedAction"][] = ["Pull in", "Push Out", "Cancel"]
 
 const TEAM_OPTIONS = ["Supply", "Production", "Customer Support"]
 const EMPTY_OPTION = "__empty__"
@@ -82,7 +97,14 @@ const ACTION_STYLES: Record<
     className: "bg-blue-100 text-blue-700 border border-blue-200",
   },
   "Pull in": {
+    icon: <ArrowDown className="h-3.5 w-3.5" />,
     className: "bg-emerald-100 text-emerald-700 border border-emerald-200",
+  },
+  STO: {
+    className: "bg-violet-100 text-violet-700 border border-violet-200",
+  },
+  "Scrap/Sell": {
+    className: "bg-pink-100 text-pink-700 border border-pink-200",
   },
 }
 
@@ -130,6 +152,81 @@ function statusIcon(status: string) {
   return <CircleDotDashed className={`${className} fill-current`} />
 }
 
+const PRIORITY_BADGES: Record<OpportunityPriority, string> = {
+  P1: "bg-rose-100 text-rose-700 border border-rose-200",
+  P2: "bg-orange-100 text-orange-700 border border-orange-200",
+  P3: "bg-amber-100 text-amber-700 border border-amber-200",
+  P4: "bg-slate-100 text-slate-700 border border-slate-200",
+}
+
+export function PriorityBadge({ value }: { value: OpportunityPriority }) {
+  return (
+    <Badge className={`rounded-full px-2 py-1 text-xs font-semibold ${PRIORITY_BADGES[value]}`}>
+      {value}
+    </Badge>
+  )
+}
+
+function timeToActLabel(days: number | null) {
+  if (days == null) return "—"
+  if (days < 0) return `Late ${Math.abs(days)} days`
+  return `${days} days`
+}
+
+function timeToActClass(days: number | null) {
+  if (days == null) return "bg-muted text-muted-foreground"
+  if (days < 0) return "bg-red-100 text-red-700"
+  if (days <= 3) return "bg-red-100 text-red-700"
+  if (days <= 7) return "bg-orange-100 text-orange-700"
+  if (days <= 14) return "bg-yellow-100 text-yellow-800"
+  return "bg-emerald-100 text-emerald-700"
+}
+
+export function TimeToActBadge({ days }: { days: number | null }) {
+  return (
+    <Badge className={`border border-transparent ${timeToActClass(days)}`}>
+      {timeToActLabel(days)}
+    </Badge>
+  )
+}
+
+function formatAgeDuration(diffMs: number) {
+  const hour = 3600000
+  const day = 86400000
+  const days = Math.max(0, Math.round(diffMs / day))
+  if (diffMs < day) {
+    const hours = Math.max(0, Math.round(diffMs / hour))
+    return `${hours}h`
+  }
+  if (days <= 30) return `${days}d`
+  if (days <= 90) return `${Math.round(days / 7)}w`
+  return `${Math.round(days / 30)}mo`
+}
+
+function ageColorClass(days: number | null) {
+  if (days == null) return "bg-muted text-muted-foreground"
+  if (days < 7) return "bg-emerald-100 text-emerald-700"
+  if (days <= 14) return "bg-yellow-100 text-yellow-800"
+  if (days <= 30) return "bg-orange-100 text-orange-700"
+  return "bg-red-100 text-red-700"
+}
+
+function waitColorClass(days: number | null) {
+  if (days == null) return "bg-muted text-muted-foreground"
+  if (days < 3) return "bg-emerald-100 text-emerald-700"
+  if (days <= 7) return "bg-yellow-100 text-yellow-800"
+  if (days <= 14) return "bg-orange-100 text-orange-700"
+  return "bg-red-100 text-red-700"
+}
+
+function inProgressColorClass(days: number | null) {
+  if (days == null) return "bg-muted text-muted-foreground"
+  if (days < 7) return "bg-emerald-100 text-emerald-700"
+  if (days <= 14) return "bg-yellow-100 text-yellow-800"
+  if (days <= 21) return "bg-orange-100 text-orange-700"
+  return "bg-red-100 text-red-700"
+}
+
 function ticketBadgeClass(level: EscalationTicket["level"]) {
   if (level === 1) return "bg-cyan-100 text-cyan-800"
   if (level === 2) return "bg-yellow-100 text-yellow-800"
@@ -137,7 +234,7 @@ function ticketBadgeClass(level: EscalationTicket["level"]) {
   return "bg-zinc-300 text-zinc-900"
 }
 
-function StatusLabel({ status }: { status: string }) {
+export function StatusLabel({ status }: { status: string }) {
   return (
     <span className="inline-flex items-center gap-1.5">
       {statusIcon(status)}
@@ -162,9 +259,14 @@ export function OpportunitiesTable({
   showSummary = true,
   statusFilter,
   teamFilter,
+  rowFilter,
+  externalSort,
   actionBarOffsetClass = "top-[72px]",
   actionBarGapClass = "mt-3",
   actionBarClassName = "",
+  opportunityTypeView = "standard",
+  suggestedActionsFilter,
+  maxRows,
 }: {
   filter?: OpportunitiesTableFilter
   showToolbar?: boolean
@@ -177,6 +279,16 @@ export function OpportunitiesTable({
   showSummary?: boolean
   statusFilter?: Opportunity["status"] | null
   teamFilter?: string | null
+  rowFilter?: (row: Opportunity) => boolean
+  opportunityTypeView?: OpportunityTypeView
+  /** When set, only show rows with these suggested actions (e.g. for Top 10 widget tabs). */
+  suggestedActionsFilter?: Opportunity["suggestedAction"][]
+  /** When set, show only first N rows after sorting (e.g. 10 for Top 10 widget). */
+  maxRows?: number
+  externalSort?: {
+    key: "inventory" | "timeToAct" | "age" | "timeToStart" | "inProgress" | "suggestedDate"
+    dir: "asc" | "desc"
+  }
   actionBarOffsetClass?: string
   actionBarGapClass?: string
   actionBarClassName?: string
@@ -188,6 +300,7 @@ export function OpportunitiesTable({
     setAssigneeByIds,
     setTeamByIds,
     setDeliveryDateByIds,
+    setPriorityByIds,
     applyPushOutByIds,
     escalationTickets,
     upsertEscalationTicket,
@@ -195,6 +308,8 @@ export function OpportunitiesTable({
     plan,
     opportunities,
     filters,
+    setFilters,
+    now,
   } = useInventoryData()
   const defaultBase = useFilteredOpportunities({ includeSnoozed: false })
   const defaultRows = useFilteredOpportunities({ includeSnoozed })
@@ -274,8 +389,51 @@ export function OpportunitiesTable({
     () => getOpportunitiesScale(baseTotal, targetTotal),
     [baseTotal, targetTotal]
   )
+  const [selected, setSelected] = React.useState<Record<string, boolean>>({})
+  const [openSnooze, setOpenSnooze] = React.useState(false)
+  const [openUnsnooze, setOpenUnsnooze] = React.useState(false)
+  const [openStatus, setOpenStatus] = React.useState(false)
+  const [bulkStatus, setBulkStatus] = React.useState<Opportunity["status"]>("Backlog")
+  const [openPanel, setOpenPanel] = React.useState(false)
+  const [panelRow, setPanelRow] = React.useState<Opportunity | null>(null)
+  const [openTicketPanel, setOpenTicketPanel] = React.useState(false)
+  const [activeTicket, setActiveTicket] = React.useState<EscalationTicket | null>(null)
+  const [openDeliveryId, setOpenDeliveryId] = React.useState<string | null>(null)
+  const [deliveryDraft, setDeliveryDraft] = React.useState<Date | undefined>(undefined)
+  const [snackbarOpen, setSnackbarOpen] = React.useState(false)
+  const [snackbarMessage, setSnackbarMessage] = React.useState("")
+  const [ticketCommentDraft, setTicketCommentDraft] = React.useState("")
+  const [ticketComments, setTicketComments] = React.useState<
+    Record<string, { id: string; text: string; createdAt: string }[]>
+  >({})
+  const [commentsById, setCommentsById] = React.useState<
+    Record<string, { id: string; text: string; createdAt: string }[]>
+  >({})
+  const [commentDraft, setCommentDraft] = React.useState("")
+  const [, startTransition] = React.useTransition()
+  const [sortKey, setSortKey] = React.useState<
+    "inventory" | "timeToAct" | "age" | "timeToStart" | "inProgress" | "suggestedDate"
+  >("inventory")
+  const [sortDir, setSortDir] = React.useState<"asc" | "desc">("desc")
+  const searchParams = useSearchParams()
+  const groupBy = searchParams.get("groupBy") === "order" ? "order" : "none"
+  const [collapsedOrders, setCollapsedOrders] = React.useState<Set<string>>(new Set())
+  React.useEffect(() => {
+    if (!externalSort) return
+    setSortKey(externalSort.key)
+    setSortDir(externalSort.dir)
+  }, [externalSort])
   const filteredRows = React.useMemo(() => {
     let res = scopedAll
+    if (suggestedActionsFilter?.length) {
+      res = res.filter((o) => suggestedActionsFilter.includes(o.suggestedAction))
+    } else if (opportunityTypeView === "standard") {
+      res = res.filter((o) => STANDARD_ACTIONS.includes(o.suggestedAction))
+    } else if (opportunityTypeView === "sto") {
+      res = res.filter((o) => o.suggestedAction === "STO")
+    } else if (opportunityTypeView === "scrap-sell") {
+      res = res.filter((o) => o.suggestedAction === "Scrap/Sell")
+    }
     if (filter?.kind === "type") {
       res = res.filter((o) => o.suggestedAction === filter.category)
     }
@@ -288,14 +446,101 @@ export function OpportunitiesTable({
       const ids = new Set(match?.ids ?? [])
       res = res.filter((o) => ids.has(o.id))
     }
+    if (filter?.kind === "priority") {
+      res = res.filter((o) => resolveOpportunityPriority(o, now) === filter.category)
+    }
     if (statusFilter) {
       res = res.filter((o) => o.status === statusFilter)
     }
     if (teamFilter) {
       res = res.filter((o) => o.team === teamFilter)
     }
+    if (filters.timeToAct.length > 0) {
+      const today = new Date()
+      res = res.filter((o) => {
+        const days = calcTimeToActDays(o.needDate, o.leadTimeDays, today)
+        if (days == null) return false
+        return filters.timeToAct.some((range) => {
+          if (range === "late") return days < 0
+          if (range === "lt7") return days <= 7
+          if (range === "lt14") return days <= 14
+          if (range === "gte14") return days > 14
+          return false
+        })
+      })
+    }
+    if (filters.ageRanges.length > 0) {
+      const now = Date.now()
+      res = res.filter((o) => {
+        const created = Date.parse(o.createdAt)
+        if (!Number.isFinite(created)) return false
+        const days = Math.round((now - created) / 86400000)
+        return filters.ageRanges.some((range) => {
+          if (range === "lt7") return days < 7
+          if (range === "d7to14") return days >= 7 && days <= 14
+          if (range === "d15to30") return days >= 15 && days <= 30
+          if (range === "gt30") return days > 30
+          return false
+        })
+      })
+    }
+    if (filters.timeToStartRanges.length > 0) {
+      const now = Date.now()
+      res = res.filter((o) => {
+        const created = Date.parse(o.createdAt)
+        if (!Number.isFinite(created)) return false
+        const started = o.startedAt ? Date.parse(o.startedAt) : NaN
+        const days =
+          o.status === "To Do"
+            ? Math.round((now - created) / 86400000)
+            : Number.isFinite(started)
+              ? Math.max(0, Math.round((started - created) / 86400000))
+              : null
+        if (days == null) return false
+        return filters.timeToStartRanges.some((range) => {
+          if (range === "lt3") return days < 3
+          if (range === "d3to7") return days >= 3 && days <= 7
+          if (range === "d8to14") return days >= 8 && days <= 14
+          if (range === "gt14") return days > 14
+          return false
+        })
+      })
+    }
+    if (filters.inProgressRanges.length > 0) {
+      const now = Date.now()
+      res = res.filter((o) => {
+        if (o.status !== "In Progress") return false
+        const started = o.startedAt ? Date.parse(o.startedAt) : NaN
+        if (!Number.isFinite(started)) return false
+        const days = Math.max(0, Math.round((now - started) / 86400000))
+        return filters.inProgressRanges.some((range) => {
+          if (range === "lt7") return days < 7
+          if (range === "d7to14") return days >= 7 && days <= 14
+          if (range === "d15to21") return days >= 15 && days <= 21
+          if (range === "gt21") return days > 21
+          return false
+        })
+      })
+    }
+    if (rowFilter) {
+      res = res.filter(rowFilter)
+    }
     return res
-  }, [scopedAll, scopedBase, filter, statusFilter, teamFilter])
+  }, [
+    scopedAll,
+    scopedBase,
+    opportunityTypeView,
+    suggestedActionsFilter,
+    filter,
+    statusFilter,
+    teamFilter,
+    filters.timeToAct,
+    filters.ageRanges,
+    filters.timeToStartRanges,
+    filters.inProgressRanges,
+    rowFilter,
+    now,
+  ])
 
   const rows = filteredRows
   const rowMeta = React.useMemo(() => {
@@ -306,6 +551,10 @@ export function OpportunitiesTable({
         suggestedDateTime: number
         suggestedDateLabel: string
         deliveryDateLabel: string
+        timeToActDays: number | null
+        ageDays: number | null
+        timeToStartDays: number | null
+        inProgressDays: number | null
       }
     >()
     rows.forEach((row) => {
@@ -319,6 +568,22 @@ export function OpportunitiesTable({
       const deliveryDateLabel = Number.isFinite(deliveryTime)
         ? format(new Date(deliveryTime), "MMM d, yyyy")
         : "—"
+      const timeToActDays = calcTimeToActDays(row.needDate, row.leadTimeDays, new Date())
+      const createdTime = Date.parse(row.createdAt)
+      const ageDays = Number.isFinite(createdTime)
+        ? Math.round((Date.now() - createdTime) / 86400000)
+        : null
+      const startedTime = row.startedAt ? Date.parse(row.startedAt) : NaN
+      const timeToStartDays =
+        row.status === "To Do"
+          ? ageDays
+          : Number.isFinite(startedTime) && Number.isFinite(createdTime)
+            ? Math.max(0, Math.round((startedTime - createdTime) / 86400000))
+            : null
+      const inProgressDays =
+        row.status === "In Progress" && Number.isFinite(startedTime)
+          ? Math.max(0, Math.round((Date.now() - startedTime) / 86400000))
+          : null
       meta.set(row.id, {
         inventoryValueEur: useRawInventoryValue
           ? row.cashImpactEur
@@ -326,6 +591,10 @@ export function OpportunitiesTable({
         suggestedDateTime: safeSuggestedTime,
         suggestedDateLabel,
         deliveryDateLabel,
+        timeToActDays,
+        ageDays,
+        timeToStartDays,
+        inProgressDays,
       })
     })
     return meta
@@ -344,11 +613,69 @@ export function OpportunitiesTable({
     return ids.sort((aId, bId) => {
       const aMeta = rowMeta.get(aId)
       const bMeta = rowMeta.get(bId)
-      const byValue = (bMeta?.inventoryValueEur ?? 0) - (aMeta?.inventoryValueEur ?? 0)
-      if (byValue !== 0) return byValue
+      if (sortKey === "suggestedDate") {
+        const aTime = aMeta?.suggestedDateTime ?? Infinity
+        const bTime = bMeta?.suggestedDateTime ?? Infinity
+        const diff = aTime - bTime
+        if (diff !== 0) return sortDir === "asc" ? diff : -diff
+      } else if (sortKey === "timeToAct") {
+        const aDays = aMeta?.timeToActDays ?? Infinity
+        const bDays = bMeta?.timeToActDays ?? Infinity
+        const diff = aDays - bDays
+        if (diff !== 0) return sortDir === "asc" ? diff : -diff
+      } else if (sortKey === "age") {
+        const aDays = aMeta?.ageDays ?? Infinity
+        const bDays = bMeta?.ageDays ?? Infinity
+        const diff = aDays - bDays
+        if (diff !== 0) return sortDir === "asc" ? diff : -diff
+      } else if (sortKey === "timeToStart") {
+        const aDays = aMeta?.timeToStartDays ?? Infinity
+        const bDays = bMeta?.timeToStartDays ?? Infinity
+        const diff = aDays - bDays
+        if (diff !== 0) return sortDir === "asc" ? diff : -diff
+      } else if (sortKey === "inProgress") {
+        const aDays = aMeta?.inProgressDays ?? Infinity
+        const bDays = bMeta?.inProgressDays ?? Infinity
+        const diff = aDays - bDays
+        if (diff !== 0) return sortDir === "asc" ? diff : -diff
+      } else {
+        const byValue = (bMeta?.inventoryValueEur ?? 0) - (aMeta?.inventoryValueEur ?? 0)
+        if (byValue !== 0) return sortDir === "asc" ? -byValue : byValue
+      }
+      // Tie-breaker: by priority (P1 first) then suggested date
+      const aRow = rowById.get(aId)
+      const bRow = rowById.get(bId)
+      if (aRow && bRow) {
+        const aPri = PRIORITY_ORDER.indexOf(resolveOpportunityPriority(aRow, now))
+        const bPri = PRIORITY_ORDER.indexOf(resolveOpportunityPriority(bRow, now))
+        const priA = aPri < 0 ? PRIORITY_ORDER.length : aPri
+        const priB = bPri < 0 ? PRIORITY_ORDER.length : bPri
+        if (priA !== priB) return priA - priB
+      }
       return (aMeta?.suggestedDateTime ?? Infinity) - (bMeta?.suggestedDateTime ?? Infinity)
     })
-  }, [rows, rowMeta])
+  }, [rows, rowMeta, sortKey, sortDir, rowById, now])
+
+  const displayedRowIds =
+    maxRows != null ? sortedRowIds.slice(0, maxRows) : sortedRowIds
+
+  const orderGroups = React.useMemo(() => {
+    const map = new Map<string, Opportunity[]>()
+    for (const r of rows) {
+      const key = r.orderNumber?.trim() || "—"
+      if (!map.has(key)) map.set(key, [])
+      map.get(key)!.push(r)
+    }
+    const sorted = Array.from(map.entries()).sort(([a], [b]) => a.localeCompare(b))
+    sorted.forEach(([, groupRows]) => {
+      groupRows.sort((a, b) => {
+        const aId = sortedRowIds.indexOf(a.id)
+        const bId = sortedRowIds.indexOf(b.id)
+        return aId - bId
+      })
+    })
+    return sorted
+  }, [rows, sortedRowIds])
 
   const assigneeOptions = React.useMemo(() => {
     const values = Array.from(
@@ -363,27 +690,6 @@ export function OpportunitiesTable({
   }, [allRows])
 
   const teamOptions = React.useMemo(() => [EMPTY_OPTION, ...TEAM_OPTIONS], [])
-
-  const [selected, setSelected] = React.useState<Record<string, boolean>>({})
-  const [openSnooze, setOpenSnooze] = React.useState(false)
-  const [openUnsnooze, setOpenUnsnooze] = React.useState(false)
-  const [openStatus, setOpenStatus] = React.useState(false)
-  const [bulkStatus, setBulkStatus] = React.useState<Opportunity["status"]>("Backlog")
-  const [openPanel, setOpenPanel] = React.useState(false)
-  const [panelRow, setPanelRow] = React.useState<Opportunity | null>(null)
-  const [openTicketPanel, setOpenTicketPanel] = React.useState(false)
-  const [activeTicket, setActiveTicket] = React.useState<EscalationTicket | null>(null)
-  const [openDeliveryId, setOpenDeliveryId] = React.useState<string | null>(null)
-  const [deliveryDraft, setDeliveryDraft] = React.useState<Date | undefined>(undefined)
-  const [snackbarOpen, setSnackbarOpen] = React.useState(false)
-  const [snackbarMessage, setSnackbarMessage] = React.useState("")
-  const [ticketCommentDraft, setTicketCommentDraft] = React.useState("")
-  const [ticketComments, setTicketComments] = React.useState<Record<string, { id: string; text: string; createdAt: string }[]>>({})
-  const [commentsById, setCommentsById] = React.useState<
-    Record<string, { id: string; text: string; createdAt: string }[]>
-  >({})
-  const [commentDraft, setCommentDraft] = React.useState("")
-  const [, startTransition] = React.useTransition()
 
   const selectedIds = React.useMemo(
     () => Object.entries(selected).filter(([, v]) => v).map(([k]) => k),
@@ -530,6 +836,359 @@ export function OpportunitiesTable({
           showToolbar && selectedCount > 0 ? actionBarGapClass : ""
         }`}
       >
+        {opportunityTypeView === "sto" ? (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead className="w-[48px]">
+                  <Checkbox
+                    checked={allChecked ? true : indeterminate ? "indeterminate" : false}
+                    onCheckedChange={(v) => toggleAll(Boolean(v))}
+                    aria-label="Select all"
+                  />
+                </TableHead>
+                <TableHead>Part Name</TableHead>
+                <TableHead>Part Number</TableHead>
+                <TableHead>Current Storage location</TableHead>
+                <TableHead>Target Storage location</TableHead>
+                <TableHead>Date of the STO</TableHead>
+                <TableHead className="text-right">Value at stake</TableHead>
+                <TableHead>Time to Act</TableHead>
+                <TableHead>Priority</TableHead>
+                <TableHead>Age</TableHead>
+                <TableHead>Time to Start</TableHead>
+                <TableHead>In Progress</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead>Team</TableHead>
+                <TableHead>Assignee</TableHead>
+                <TableHead>Order</TableHead>
+                <TableHead>Esc. ticket</TableHead>
+                <TableHead>Buyer code</TableHead>
+                <TableHead>MRP code</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {displayedRowIds.map((rowId) => {
+                const r = rowById.get(rowId)
+                if (!r) return null
+                const meta = rowMeta.get(r.id)
+                return (
+                  <TableRow key={r.id} className={r.status === "Snoozed" ? "opacity-60" : ""}>
+                    <TableCell>
+                      <Checkbox
+                        checked={!!selected[r.id]}
+                        onCheckedChange={(v) =>
+                          setSelected((prev) => ({ ...prev, [r.id]: Boolean(v) }))
+                        }
+                        aria-label={`Select ${r.orderNumber}`}
+                      />
+                    </TableCell>
+                    <TableCell>{r.partName}</TableCell>
+                    <TableCell>{r.partNumber}</TableCell>
+                    <TableCell>{r.currentStorageLocation ?? "—"}</TableCell>
+                    <TableCell>{r.targetStorageLocation ?? "—"}</TableCell>
+                    <TableCell>{meta?.suggestedDateLabel ?? "—"}</TableCell>
+                    <TableCell className="text-right">
+                      {formatEurCompact(meta?.inventoryValueEur ?? 0)}
+                    </TableCell>
+                    <TableCell>
+                      <TimeToActBadge days={meta?.timeToActDays ?? null} />
+                    </TableCell>
+                    <TableCell>
+                      <Select
+                        value={resolveOpportunityPriority(r, now)}
+                        onValueChange={(value) =>
+                          setPriorityByIds([r.id], value as OpportunityPriority)
+                        }
+                      >
+                        <SelectTrigger className="h-8 w-[110px] border-0 bg-transparent px-2 text-xs font-semibold shadow-none hover:bg-muted/40 data-[state=open]:bg-muted/60">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent align="start">
+                          {PRIORITY_ORDER.map((priority) => (
+                            <SelectItem key={priority} value={priority}>
+                              <PriorityBadge value={priority} />
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </TableCell>
+                    <TableCell>
+                      <Badge className={`border border-transparent ${ageColorClass(meta?.ageDays ?? null)}`}>
+                        {meta?.ageDays != null ? formatAgeDuration(meta.ageDays * 86400000) : "—"}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
+                      {meta?.timeToStartDays == null ? (
+                        <span className="text-sm text-muted-foreground">—</span>
+                      ) : (
+                        <Badge className={`border border-transparent ${waitColorClass(meta.timeToStartDays)}`}>
+                          <span className="inline-flex items-center gap-1">
+                            {r.status === "To Do" ? (
+                              <Clock className="h-3 w-3" />
+                            ) : (
+                              <Check className="h-3 w-3" />
+                            )}
+                            {formatAgeDuration(meta.timeToStartDays * 86400000)}
+                          </span>
+                        </Badge>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      {meta?.inProgressDays == null ? (
+                        <span className="text-sm text-muted-foreground">—</span>
+                      ) : (
+                        <Badge className={`border border-transparent ${inProgressColorClass(meta.inProgressDays)}`}>
+                          {formatAgeDuration(meta.inProgressDays * 86400000)}
+                        </Badge>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      <Select
+                        value={r.status}
+                        onValueChange={(value) => {
+                          const nextStatus = value as Opportunity["status"]
+                          startTransition(() => setStatusByIds([r.id], nextStatus))
+                        }}
+                      >
+                        <SelectTrigger className="h-8 w-[150px] rounded-full border bg-muted/40 px-2 text-xs font-semibold shadow-none hover:bg-muted/60 data-[state=open]:bg-muted/70">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent align="start">
+                          <SelectItem value="Backlog"><StatusLabel status="Backlog" /></SelectItem>
+                          <SelectItem value="To Do"><StatusLabel status="To Do" /></SelectItem>
+                          <SelectItem value="In Progress"><StatusLabel status="In Progress" /></SelectItem>
+                          <SelectItem value="Done"><StatusLabel status="Done" /></SelectItem>
+                          <SelectItem value="Canceled"><StatusLabel status="Canceled" /></SelectItem>
+                          <SelectItem value="Snoozed"><StatusLabel status="Snoozed" /></SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </TableCell>
+                    <TableCell>{r.team || "—"}</TableCell>
+                    <TableCell>{r.assignee || "—"}</TableCell>
+                    <TableCell>{r.orderNumber}</TableCell>
+                    <TableCell>
+                      {escalationTickets[r.partNumber] ? (
+                        <Badge className={ticketBadgeClass(escalationTickets[r.partNumber]!.level)}>
+                          L{escalationTickets[r.partNumber]!.level}
+                        </Badge>
+                      ) : (
+                        "—"
+                      )}
+                    </TableCell>
+                    <TableCell>{r.buyerCode}</TableCell>
+                    <TableCell>{r.mrpCode}</TableCell>
+                  </TableRow>
+                )
+              })}
+            </TableBody>
+          </Table>
+        ) : groupBy === "order" && maxRows == null ? (
+          <div className="divide-y divide-border">
+            {orderGroups.map(([orderNumber, groupRows]) => {
+              const isCollapsed = collapsedOrders.has(orderNumber)
+              return (
+                <div key={orderNumber} className="first:border-t-0">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setCollapsedOrders((prev) => {
+                        const next = new Set(prev)
+                        if (next.has(orderNumber)) next.delete(orderNumber)
+                        else next.add(orderNumber)
+                        return next
+                      })
+                    }
+                    className="flex w-full items-center gap-2 px-4 py-3 text-left hover:bg-muted/50 transition-colors"
+                  >
+                    <ChevronDown
+                      className={cn(
+                        "h-4 w-4 shrink-0 text-muted-foreground transition-transform",
+                        isCollapsed && "-rotate-90"
+                      )}
+                    />
+                    <Badge
+                      variant="secondary"
+                      className="rounded-md px-2.5 py-0.5 font-medium text-foreground"
+                    >
+                      {orderNumber}
+                    </Badge>
+                    <span className="text-xs text-muted-foreground">
+                      {groupRows.length} {groupRows.length === 1 ? "opportunity" : "opportunities"}
+                    </span>
+                  </button>
+                  {!isCollapsed && (
+                    <div className="overflow-x-auto border-t border-border">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead className="w-[48px]">
+                              <Checkbox
+                                checked={
+                                  groupRows.length > 0 &&
+                                  groupRows.every((r) => selected[r.id])
+                                }
+                                onCheckedChange={(checked) => {
+                                  if (checked) {
+                                    setSelected((prev) => {
+                                      const next = { ...prev }
+                                      groupRows.forEach((r) => (next[r.id] = true))
+                                      return next
+                                    })
+                                  } else {
+                                    setSelected((prev) => {
+                                      const next = { ...prev }
+                                      groupRows.forEach((r) => (next[r.id] = false))
+                                      return next
+                                    })
+                                  }
+                                }}
+                                aria-label={`Select all in ${orderNumber}`}
+                              />
+                            </TableHead>
+                            <TableHead>Opportunity type</TableHead>
+                            <TableHead>Suggested Date</TableHead>
+                            <TableHead>Delivery date</TableHead>
+                            <TableHead>Time to Act</TableHead>
+                            <TableHead>Priority</TableHead>
+                            <TableHead>Status</TableHead>
+                            <TableHead>Order number</TableHead>
+                            <TableHead>Part Name</TableHead>
+                            <TableHead>Part Number</TableHead>
+                            <TableHead className="text-right">Value</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {groupRows.map((r) => {
+                            const meta = rowMeta.get(r.id)
+                            return (
+                              <TableRow
+                                key={r.id}
+                                className={r.status === "Snoozed" ? "opacity-60" : ""}
+                              >
+                                <TableCell>
+                                  <Checkbox
+                                    checked={!!selected[r.id]}
+                                    onCheckedChange={(v) =>
+                                      setSelected((prev) => ({
+                                        ...prev,
+                                        [r.id]: Boolean(v),
+                                      }))
+                                    }
+                                    aria-label={`Select ${r.orderNumber}`}
+                                  />
+                                </TableCell>
+                                <TableCell className="font-medium">{r.suggestedAction}</TableCell>
+                                <TableCell>{meta?.suggestedDateLabel ?? ""}</TableCell>
+                                <TableCell>{meta?.deliveryDateLabel ?? "—"}</TableCell>
+                                <TableCell>
+                                  <TimeToActBadge days={meta?.timeToActDays ?? null} />
+                                </TableCell>
+                                <TableCell>
+                                  <Select
+                                    value={resolveOpportunityPriority(r, now)}
+                                    onValueChange={(value) =>
+                                      setPriorityByIds([r.id], value as OpportunityPriority)
+                                    }
+                                  >
+                                    <SelectTrigger className="h-8 w-[110px] border-0 bg-transparent px-2 text-xs font-semibold shadow-none hover:bg-muted/40 data-[state=open]:bg-muted/60">
+                                      <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent align="start">
+                                      {PRIORITY_ORDER.map((priority) => (
+                                        <SelectItem key={priority} value={priority}>
+                                          <PriorityBadge value={priority} />
+                                        </SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                </TableCell>
+                                <TableCell>
+                                  <Select
+                                    value={r.status}
+                                    onValueChange={(value) => {
+                                      const nextStatus = value as Opportunity["status"]
+                                      startTransition(() => {
+                                        setStatusByIds([r.id], nextStatus)
+                                      })
+                                    }}
+                                  >
+                                    <SelectTrigger className="h-8 w-[150px] rounded-full border bg-muted/40 px-2 text-xs font-semibold shadow-none hover:bg-muted/60 data-[state=open]:bg-muted/70">
+                                      <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent align="start">
+                                      <SelectItem value="Backlog">
+                                        <StatusLabel status="Backlog" />
+                                      </SelectItem>
+                                      <SelectItem value="To Do">
+                                        <StatusLabel status="To Do" />
+                                      </SelectItem>
+                                      <SelectItem value="In Progress">
+                                        <StatusLabel status="In Progress" />
+                                      </SelectItem>
+                                      <SelectItem value="Done">
+                                        <StatusLabel status="Done" />
+                                      </SelectItem>
+                                      <SelectItem value="Canceled">
+                                        <StatusLabel status="Canceled" />
+                                      </SelectItem>
+                                      <SelectItem value="Snoozed">
+                                        <StatusLabel status="Snoozed" />
+                                      </SelectItem>
+                                    </SelectContent>
+                                  </Select>
+                                </TableCell>
+                                <TableCell>
+                                  <button
+                                    type="button"
+                                    className="font-medium text-blue-700 hover:text-blue-900"
+                                    onClick={() => {
+                                      setPanelRow(r)
+                                      setOpenPanel(true)
+                                    }}
+                                  >
+                                    {r.orderNumber}
+                                  </button>
+                                </TableCell>
+                                <TableCell>
+                                  <button
+                                    type="button"
+                                    className="font-medium text-blue-700 hover:text-blue-900"
+                                    onClick={() => {
+                                      setPanelRow(r)
+                                      setOpenPanel(true)
+                                    }}
+                                  >
+                                    {r.partName}
+                                  </button>
+                                </TableCell>
+                                <TableCell>
+                                  <button
+                                    type="button"
+                                    className="font-medium text-blue-700 hover:text-blue-900"
+                                    onClick={() => {
+                                      setPanelRow(r)
+                                      setOpenPanel(true)
+                                    }}
+                                  >
+                                    {r.partNumber}
+                                  </button>
+                                </TableCell>
+                                <TableCell className="text-right">
+                                  {formatEurCompact(meta?.inventoryValueEur ?? 0)}
+                                </TableCell>
+                              </TableRow>
+                            )
+                          })}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        ) : (
         <Table>
           <TableHeader>
             <TableRow>
@@ -543,16 +1202,201 @@ export function OpportunitiesTable({
               <TableHead>Opportunity type</TableHead>
               <TableHead>
                 <div className="flex items-center gap-1">
-                  Suggested Date
-                  <ArrowDown className="h-3.5 w-3.5 text-muted-foreground" />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (sortKey !== "suggestedDate") {
+                        setSortKey("suggestedDate")
+                        setSortDir("asc")
+                        return
+                      }
+                      setSortDir((prev) => (prev === "asc" ? "desc" : "asc"))
+                    }}
+                    className="inline-flex items-center gap-1 text-left"
+                  >
+                    Suggested Date
+                    <ArrowDown
+                      className={`h-3.5 w-3.5 text-muted-foreground transition-transform ${
+                        sortKey === "suggestedDate" && sortDir === "asc" ? "rotate-180" : ""
+                      }`}
+                    />
+                  </button>
                 </div>
               </TableHead>
               <TableHead>Delivery date</TableHead>
               <TableHead>
                 <div className="flex items-center gap-1">
-                  Inventory value
-                  <ArrowDown className="h-3.5 w-3.5 text-muted-foreground" />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (sortKey !== "timeToAct") {
+                        setSortKey("timeToAct")
+                        setSortDir("asc")
+                        return
+                      }
+                      setSortDir((prev) => (prev === "asc" ? "desc" : "asc"))
+                    }}
+                    className="inline-flex items-center gap-1 text-left"
+                  >
+                    Time to Act
+                    <ArrowDown
+                      className={`h-3.5 w-3.5 text-muted-foreground transition-transform ${
+                        sortKey === "timeToAct" && sortDir === "asc" ? "rotate-180" : ""
+                      }`}
+                    />
+                  </button>
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button
+                          type="button"
+                          className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-border text-[10px] text-muted-foreground hover:bg-accent"
+                          aria-label="Time to Act info"
+                        >
+                          i
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent side="top">
+                        Time to Act = Need date − Lead time (days) − Today.
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
                 </div>
+              </TableHead>
+              <TableHead>Priority</TableHead>
+              <TableHead>
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (sortKey !== "age") {
+                        setSortKey("age")
+                        setSortDir("desc")
+                        return
+                      }
+                      setSortDir((prev) => (prev === "asc" ? "desc" : "asc"))
+                    }}
+                    className="inline-flex items-center gap-1 text-left"
+                  >
+                    Age
+                    <ArrowDown
+                      className={`h-3.5 w-3.5 text-muted-foreground transition-transform ${
+                        sortKey === "age" && sortDir === "asc" ? "rotate-180" : ""
+                      }`}
+                    />
+                  </button>
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button
+                          type="button"
+                          className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-border text-[10px] text-muted-foreground hover:bg-accent"
+                          aria-label="Age info"
+                        >
+                          i
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent side="top">Time since created/identified.</TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                </div>
+              </TableHead>
+              <TableHead>
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (sortKey !== "timeToStart") {
+                        setSortKey("timeToStart")
+                        setSortDir("desc")
+                        return
+                      }
+                      setSortDir((prev) => (prev === "asc" ? "desc" : "asc"))
+                    }}
+                    className="inline-flex items-center gap-1 text-left"
+                  >
+                    Time to Start
+                    <ArrowDown
+                      className={`h-3.5 w-3.5 text-muted-foreground transition-transform ${
+                        sortKey === "timeToStart" && sortDir === "asc" ? "rotate-180" : ""
+                      }`}
+                    />
+                  </button>
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button
+                          type="button"
+                          className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-border text-[10px] text-muted-foreground hover:bg-accent"
+                          aria-label="Time to start info"
+                        >
+                          i
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent side="top">
+                        Time from To Do → In Progress (when applicable).
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                </div>
+              </TableHead>
+              <TableHead>
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (sortKey !== "inProgress") {
+                        setSortKey("inProgress")
+                        setSortDir("desc")
+                        return
+                      }
+                      setSortDir((prev) => (prev === "asc" ? "desc" : "asc"))
+                    }}
+                    className="inline-flex items-center gap-1 text-left"
+                  >
+                    In Progress
+                    <ArrowDown
+                      className={`h-3.5 w-3.5 text-muted-foreground transition-transform ${
+                        sortKey === "inProgress" && sortDir === "asc" ? "rotate-180" : ""
+                      }`}
+                    />
+                  </button>
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button
+                          type="button"
+                          className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-border text-[10px] text-muted-foreground hover:bg-accent"
+                          aria-label="In progress info"
+                        >
+                          i
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent side="top">Time since In Progress started.</TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                </div>
+              </TableHead>
+              <TableHead>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (sortKey !== "inventory") {
+                      setSortKey("inventory")
+                      setSortDir("desc")
+                      return
+                    }
+                    setSortDir((prev) => (prev === "asc" ? "desc" : "asc"))
+                  }}
+                  className="inline-flex items-center gap-1 text-left"
+                >
+                  Inventory value
+                  <ArrowDown
+                    className={`h-3.5 w-3.5 text-muted-foreground transition-transform ${
+                      sortKey === "inventory" && sortDir === "asc" ? "rotate-180" : ""
+                    }`}
+                  />
+                </button>
               </TableHead>
             <TableHead>Status</TableHead>
               <TableHead>Team</TableHead>
@@ -568,7 +1412,7 @@ export function OpportunitiesTable({
           </TableHeader>
 
           <TableBody>
-            {sortedRowIds.map((rowId) => {
+            {displayedRowIds.map((rowId) => {
               const r = rowById.get(rowId)
               if (!r) return null
               const meta = rowMeta.get(r.id)
@@ -643,6 +1487,58 @@ export function OpportunitiesTable({
                       </div>
                     </PopoverContent>
                   </Popover>
+                </TableCell>
+                <TableCell>
+                  <TimeToActBadge days={meta?.timeToActDays ?? null} />
+                </TableCell>
+                <TableCell>
+                  <Select
+                    value={resolveOpportunityPriority(r, now)}
+                    onValueChange={(value) =>
+                      setPriorityByIds([r.id], value as OpportunityPriority)
+                    }
+                  >
+                    <SelectTrigger className="h-8 w-[110px] border-0 bg-transparent px-2 text-xs font-semibold shadow-none hover:bg-muted/40 data-[state=open]:bg-muted/60">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent align="start">
+                      {PRIORITY_ORDER.map((priority) => (
+                        <SelectItem key={priority} value={priority}>
+                          <PriorityBadge value={priority} />
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </TableCell>
+                <TableCell>
+                  <Badge className={`border border-transparent ${ageColorClass(meta?.ageDays ?? null)}`}>
+                    {meta?.ageDays != null ? formatAgeDuration(meta.ageDays * 86400000) : "—"}
+                  </Badge>
+                </TableCell>
+                <TableCell>
+                  {meta?.timeToStartDays == null ? (
+                    <span className="text-sm text-muted-foreground">—</span>
+                  ) : (
+                    <Badge className={`border border-transparent ${waitColorClass(meta.timeToStartDays)}`}>
+                      <span className="inline-flex items-center gap-1">
+                        {r.status === "To Do" ? (
+                          <Clock className="h-3 w-3" />
+                        ) : (
+                          <Check className="h-3 w-3" />
+                        )}
+                        {formatAgeDuration(meta.timeToStartDays * 86400000)}
+                      </span>
+                    </Badge>
+                  )}
+                </TableCell>
+                <TableCell>
+                  {meta?.inProgressDays == null ? (
+                    <span className="text-sm text-muted-foreground">—</span>
+                  ) : (
+                    <Badge className={`border border-transparent ${inProgressColorClass(meta.inProgressDays)}`}>
+                      {formatAgeDuration(meta.inProgressDays * 86400000)}
+                    </Badge>
+                  )}
                 </TableCell>
                 <TableCell>{formatEurCompact(meta?.inventoryValueEur ?? 0)}</TableCell>
                 <TableCell>
@@ -806,6 +1702,7 @@ export function OpportunitiesTable({
             })}
           </TableBody>
         </Table>
+        )}
 
         {openPanel && panelRow ? (
           <>

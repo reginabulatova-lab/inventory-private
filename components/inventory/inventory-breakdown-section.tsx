@@ -5,7 +5,6 @@ import { WidgetCard } from "@/components/inventory/kpi-card"
 import { PieBreakdown, PieDatum } from "@/components/inventory/pie-breakdown"
 import { BottomSheetModal } from "@/components/inventory/bottom-sheet-modal"
 import { PartbookTable } from "@/components/inventory/partbook-table"
-import { InventoryProjectionCard } from "@/components/inventory/inventory-projection-card"
 import {
   useFilteredOpportunities,
   useInventoryData,
@@ -47,29 +46,29 @@ export function InventoryBreakdownSection() {
   const stockStatusTotal = inventoryTotal
   const wipTotal = Math.round(inventoryTotal * 0.35)
 
-// ✅ rescale helper: keep distribution but match a new total
-// NOTE: in your breakdown types, `percent` can be string, so we ignore it here.
-const rescaleRows = React.useCallback(
-  <T extends { name: string; value: number }>(rows: T[], newTotal: number) => {
-    const sum = rows.reduce((a, b) => a + b.value, 0) || 1
+  // ✅ rescale helper: keep distribution but match a new total
+  // NOTE: in your breakdown types, `percent` can be string, so we ignore it here.
+  const rescaleRows = React.useCallback(
+    <T extends { name: string; value: number }>(rows: T[], newTotal: number) => {
+      const sum = rows.reduce((a, b) => a + b.value, 0) || 1
 
-    const scaled = rows.map((x) => ({
-      ...x,
-      value: Math.round((x.value / sum) * newTotal),
-    }))
+      const scaled = rows.map((x) => ({
+        ...x,
+        value: Math.round((x.value / sum) * newTotal),
+      }))
 
-    const diff = newTotal - scaled.reduce((a, b) => a + b.value, 0)
-    if (scaled.length) scaled[0].value += diff
+      const diff = newTotal - scaled.reduce((a, b) => a + b.value, 0)
+      if (scaled.length) scaled[0].value += diff
 
-    const scaledSum = scaled.reduce((a, b) => a + b.value, 0) || 1
-    return scaled.map((x) => ({
-      ...x,
-      // numeric percent computed here (we'll format later)
-      percent: Math.round((x.value / scaledSum) * 100),
-    }))
-  },
-  []
-)
+      const scaledSum = scaled.reduce((a, b) => a + b.value, 0) || 1
+      return scaled.map((x) => ({
+        ...x,
+        // numeric percent computed here (we'll format later)
+        percent: Math.round((x.value / scaledSum) * 100),
+      }))
+    },
+    []
+  )
 
   // ✅ apply cappedTotal to ALL three charts, so they remain consistent
   const topProgramsRows = React.useMemo(
@@ -186,7 +185,7 @@ const rescaleRows = React.useCallback(
         Inventory Breakdown
       </h2>
 
-      <div className="mt-5 grid grid-cols-12 gap-6">
+      <div className="mt-6 grid grid-cols-12 gap-6">
         <WidgetCard title="Top 10 Programs" size="m">
           <PieBreakdown
             totalLabel="Total"
@@ -228,6 +227,7 @@ const rescaleRows = React.useCallback(
       >
         {filter && <PartbookTable filter={filter} />}
       </BottomSheetModal>
+
     </section>
   )
 }

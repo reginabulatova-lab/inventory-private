@@ -129,3 +129,56 @@ export function computeInventoryBreakdown(
   }
 }
 
+export type ProgramMatrixCell = {
+  value: number
+  trend: "up" | "down" | "flat"
+  partCount: number
+}
+
+export type ProgramMatrixRow = {
+  program: string
+  totalValue: number
+  overstock: ProgramMatrixCell
+  healthy: ProgramMatrixCell
+  understock: ProgramMatrixCell
+}
+
+/** Build program health matrix: top 5–7 programs × Overstock / Healthy / Understock. */
+export function computeProgramHealthMatrix(
+  topPrograms: { name: string; value: number }[],
+  maxRows = 6
+): ProgramMatrixRow[] {
+  const seed = topPrograms.reduce((acc, p) => acc + p.name.length + p.value, 0)
+  const r = mulberry32(seed)
+  const rows = topPrograms
+    .slice(0, maxRows)
+    .map((p) => {
+      const total = p.value
+      const o = Math.round(total * (0.25 + r() * 0.25))
+      const h = Math.round(total * (0.35 + r() * 0.30))
+      const u = total - o - h
+      const trends: ("up" | "down" | "flat")[] = ["up", "down", "flat"]
+      const avgPartValue = 8000
+      return {
+        program: p.name,
+        totalValue: total,
+        overstock: {
+          value: Math.max(0, o),
+          trend: trends[Math.floor(r() * 3)],
+          partCount: Math.max(1, Math.round(o / avgPartValue)),
+        },
+        healthy: {
+          value: Math.max(0, h),
+          trend: trends[Math.floor(r() * 3)],
+          partCount: Math.max(1, Math.round(h / avgPartValue)),
+        },
+        understock: {
+          value: Math.max(0, u),
+          trend: trends[Math.floor(r() * 3)],
+          partCount: Math.max(1, Math.round(u / avgPartValue)),
+        },
+      }
+    })
+  return rows
+}
+

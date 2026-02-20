@@ -1,11 +1,17 @@
 "use client"
 
 import * as React from "react"
-import { usePathname, useRouter } from "next/navigation"
+import { usePathname, useRouter, useSearchParams } from "next/navigation"
+import { Suspense } from "react"
 import { format } from "date-fns"
 import type { DateRange as DayPickerRange } from "react-day-picker"
-import { Calendar as CalendarIcon, ChevronDown, X } from "lucide-react"
-import { Filter } from "lucide-react"
+import {
+  Calendar as CalendarIcon,
+  ChevronDown,
+  Filter,
+  PauseCircle,
+  X,
+} from "lucide-react"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -29,8 +35,9 @@ import {
   useInventoryData,
   useOpportunitiesForFilters,
 } from "@/components/inventory/inventory-data-provider"
-import type { PresetKey } from "@/components/inventory/inventory-data-provider"
+import type { PresetKey, OpportunityFilters } from "@/components/inventory/inventory-data-provider"
 import type { Opportunity } from "@/lib/inventory/types"
+import { OPPORTUNITY_TYPE_OPTIONS } from "@/lib/inventory/types"
 import { rangeFromPreset } from "@/components/inventory/inventory-data-provider"
 
 import { cn } from "@/lib/utils"
@@ -67,6 +74,34 @@ function labelFromPath(pathname: string) {
     }
   }  
 
+function OpportunitiesGroupByControl() {
+  const router = useRouter()
+  const pathname = usePathname()
+  const searchParams = useSearchParams()
+  return (
+    <div className="flex items-center gap-2">
+      <span className="text-sm text-muted-foreground whitespace-nowrap">Group by</span>
+      <Select
+        value={searchParams.get("groupBy") === "order" ? "order" : "none"}
+        onValueChange={(v) => {
+          const next = new URLSearchParams(searchParams.toString())
+          next.set("groupBy", v)
+          const base = (pathname || "/inventory/opportunities").replace(/\/?$/, "")
+          router.replace(`${base}?${next.toString()}`, { scroll: false })
+        }}
+      >
+        <SelectTrigger className="h-10 w-[140px] bg-white">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="none">None</SelectItem>
+          <SelectItem value="order">Order</SelectItem>
+        </SelectContent>
+      </Select>
+    </div>
+  )
+}
+
 export function InventorySubnav() {
     const router = useRouter()
     const pathname = usePathname()
@@ -77,23 +112,24 @@ export function InventorySubnav() {
       useInventoryData()
     const filterOptions = useOpportunitiesForFilters()
     const [partSearch, setPartSearch] = React.useState("")
+  const [filterSearch, setFilterSearch] = React.useState("")
     const [customOpen, setCustomOpen] = React.useState(false)
-    const [openSnoozeRules, setOpenSnoozeRules] = React.useState(false)
+  const [suggestedOpen, setSuggestedOpen] = React.useState(false)
+  const [openSnoozeRules, setOpenSnoozeRules] = React.useState(false)
     const [openScopeDropdown, setOpenScopeDropdown] = React.useState<
       "plant" | "buyerCode" | "mrpCode" | null
     >(null)
   const scopeDefaultsApplied = React.useRef(false)
 
-    const customLabel = React.useMemo(() => {
-      if (dateRange.from && dateRange.to) {
-        return `Custom (${format(dateRange.from, "dd/MM/yy")} - ${format(
-          dateRange.to,
-          "dd/MM/yy"
-        )})`
+    const suggestedLabel = React.useMemo(() => {
+      const range = filters.suggestedDateRange
+      if (range.from && range.to) {
+        return `${format(range.from, "dd/MM/yy")} - ${format(range.to, "dd/MM/yy")}`
       }
-      if (dateRange.from) return `Custom (${format(dateRange.from, "dd/MM/yy")} - )`
-      return "Custom"
-    }, [dateRange.from, dateRange.to])
+      if (range.from) return `From ${format(range.from, "dd/MM/yy")}`
+      if (range.to) return `Until ${format(range.to, "dd/MM/yy")}`
+      return "Any date"
+    }, [filters.suggestedDateRange])
 
     const isOpportunities = (pathname || "").startsWith("/inventory/opportunities")
 
@@ -102,11 +138,45 @@ export function InventorySubnav() {
       return { from: dateRange.from, to: dateRange.to }
     }, [dateRange.from, dateRange.to])
 
+    const [projectedPreset, setProjectedPreset] = React.useState<
+      "month" | "quarter" | "year" | "custom"
+    >(timeframePreset === "eoq" ? "quarter" : timeframePreset === "eoy" ? "year" : timeframePreset === "custom" ? "custom" : "month")
+
+    React.useEffect(() => {
+      if (timeframePreset === "eoq") setProjectedPreset("quarter")
+      else if (timeframePreset === "eoy") setProjectedPreset("year")
+      else if (timeframePreset === "custom") setProjectedPreset("custom")
+      else setProjectedPreset("month")
+    }, [timeframePreset])
+
     const todayStart = React.useMemo(() => {
       const d = new Date()
       d.setHours(0, 0, 0, 0)
       return d
     }, [])
+
+    const setProjected = React.useCallback(
+      (preset: "month" | "quarter" | "year" | "custom") => {
+        setProjectedPreset(preset)
+        const key: PresetKey =
+          preset === "month" ? "eom" : preset === "quarter" ? "eoq" : preset === "year" ? "eoy" : "custom"
+        setTimeframePreset(key)
+        if (key === "custom") {
+          setDateRange({ from: todayStart, to: todayStart })
+          setCustomOpen(true)
+        } else {
+          setCustomOpen(false)
+          setDateRange(rangeFromPreset(key))
+        }
+      },
+      [setDateRange, setTimeframePreset, todayStart]
+    )
+
+    const suggestedRange = React.useMemo<DayPickerRange | undefined>(() => {
+      const range = filters.suggestedDateRange
+      if (!range.from && !range.to) return undefined
+      return { from: range.from, to: range.to }
+    }, [filters.suggestedDateRange])
 
     React.useEffect(() => {
       if (timeframePreset !== "custom") setCustomOpen(false)
@@ -144,6 +214,7 @@ export function InventorySubnav() {
       
         return () => observer.disconnect()
       }, [])
+
 
     const scopeOptions = React.useMemo(() => {
       const plants = Array.from(new Set(filterOptions.map((o) => o.plant))).filter(Boolean).sort()
@@ -203,45 +274,54 @@ export function InventorySubnav() {
             )}
           >
             <div className="px-6 pt-6">
-            <div className="flex flex-col gap-5">
-            {/* Row 1: Inventory navigation */}
-            <div className="flex items-center gap-6">
-              <div className="flex items-center gap-6 text-base font-semibold">
-                {VIEWS.map((v) => {
-                  const active = (pathname || "").startsWith(v.href.replace(/\/+$/, ""))
-                  return (
-                    <button
-                      key={v.href}
-                      type="button"
-                      onClick={() => router.push(v.href)}
-                      className={cn(
-                        "relative pb-1 text-base font-semibold transition-colors",
-                        active ? "text-foreground" : "text-muted-foreground hover:text-foreground"
-                      )}
-                    >
-                      {v.label}
-                      {active ? (
-                        <span className="absolute left-0 right-0 -bottom-0.5 h-0.5 bg-teal-600" />
-                      ) : null}
-                    </button>
-                  )
-                })}
+            <div className="flex flex-col gap-6">
+            {/* Tabs + separator (gray line aligned with active tab line) */}
+            <div className="flex flex-col">
+              <div className="flex items-center gap-8">
+                <div className="flex items-center gap-8 text-lg font-semibold">
+                  {VIEWS.map((v) => {
+                    const active = (pathname || "").startsWith(v.href.replace(/\/+$/, ""))
+                    return (
+                      <button
+                        key={v.href}
+                        type="button"
+                        onClick={() => router.push(v.href)}
+                        className={cn(
+                          "relative pb-2 text-lg font-semibold transition-colors",
+                          active ? "text-foreground" : "text-muted-foreground hover:text-foreground"
+                        )}
+                      >
+                        {v.label}
+                        {active ? (
+                          <span className="absolute left-0 right-0 -bottom-0.5 h-[3px] bg-teal-600" />
+                        ) : null}
+                      </button>
+                    )
+                  })}
+                </div>
               </div>
+              {/* Full-width gray separator on same level as active tab line */}
+              <div className="-mx-6 border-b border-[#D9DDE7]" aria-hidden />
             </div>
 
                 {/* Row 2: Controls */}
-                <div className="flex items-center justify-between gap-4 flex-nowrap whitespace-nowrap mt-4">
+                <div className="flex items-center justify-between gap-4 flex-nowrap whitespace-nowrap">
                 <div className="flex items-center gap-4 flex-nowrap whitespace-nowrap">
                 <Popover>
                   <PopoverTrigger asChild>
-                    <Button variant="outline" size="icon" className="relative h-10 w-10 bg-white">
-                      <Filter className="h-4 w-4 text-muted-foreground" />
+                    <Button variant="outline" size="sm" className="relative h-10 gap-2 bg-white">
+                      <Filter className="h-4 w-4 shrink-0 text-muted-foreground" />
+                      <span>Filter</span>
                       {[
                         filters.partKeys.length > 0,
                         filters.suggestedActions.length > 0,
                         filters.customers.length > 0,
                         filters.escLevels.length > 0,
                         filters.statuses.length > 0,
+                        !!(filters.suggestedDateRange.from || filters.suggestedDateRange.to),
+                        filters.timeToAct.length > 0,
+                        filters.timeToStartRanges.length > 0,
+                        filters.inProgressRanges.length > 0,
                         filters.plants.length > 0,
                         filters.buyerCodes.length > 0,
                         filters.mrpCodes.length > 0,
@@ -254,6 +334,10 @@ export function InventorySubnav() {
                               filters.customers.length > 0,
                               filters.escLevels.length > 0,
                               filters.statuses.length > 0,
+                              !!(filters.suggestedDateRange.from || filters.suggestedDateRange.to),
+                              filters.timeToAct.length > 0,
+                              filters.timeToStartRanges.length > 0,
+                              filters.inProgressRanges.length > 0,
                               filters.plants.length > 0,
                               filters.buyerCodes.length > 0,
                               filters.mrpCodes.length > 0,
@@ -280,8 +364,24 @@ export function InventorySubnav() {
                     </div>
 
                     <div className="mt-4 space-y-4">
+                      <div className="space-y-2">
+                        <div className="text-xs font-medium text-muted-foreground">Search filters</div>
+                        <input
+                          value={filterSearch}
+                          onChange={(e) => setFilterSearch(e.target.value)}
+                          placeholder="Search filters..."
+                          className="h-9 w-full rounded-md border bg-white px-3 text-sm outline-none"
+                        />
+                      </div>
+                      {(() => {
+                        const q = filterSearch.trim().toLowerCase()
+                        const matches = (label: string) =>
+                          q.length === 0 || label.toLowerCase().includes(q)
+                        return (
+                          <>
                       {/* Scope */}
-                      <div className="space-y-3 rounded-lg bg-[#E6F7F8] border border-[#BFEFF2] p-3">
+                      {matches("scope") ? (
+                        <div className="space-y-3 rounded-lg bg-[#E6F7F8] border border-[#BFEFF2] p-3">
                         <div className="flex items-center gap-1.5 text-xs font-semibold text-foreground">
                           <span>✨</span>
                           <span>Scope</span>
@@ -639,10 +739,47 @@ export function InventorySubnav() {
                             )
                           })()}
                         </div>
+                        </div>
+                      ) : null}
+
+                      {/* Projection */}
+                      <div className="space-y-2">
+                        <div className="text-xs font-medium text-muted-foreground">Projection</div>
+                        <Select
+                          value={projectedPreset}
+                          onValueChange={(v) => setProjected(v as "month" | "quarter" | "year" | "custom")}
+                        >
+                          <SelectTrigger className="h-9 w-full bg-white">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="month">Month</SelectItem>
+                            <SelectItem value="quarter">Quarter</SelectItem>
+                            <SelectItem value="year">Year</SelectItem>
+                            <SelectItem value="custom">Custom</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        {projectedPreset === "custom" ? (
+                          <div className="pt-2">
+                            <Calendar
+                              mode="single"
+                              selected={dateRange.from}
+                              disabled={{ before: todayStart }}
+                              onDayClick={(day) => {
+                                const clicked = new Date(day)
+                                clicked.setHours(0, 0, 0, 0)
+                                if (clicked.getTime() < todayStart.getTime()) return
+                                setDateRange({ from: clicked, to: clicked })
+                                setTimeframePreset("custom")
+                              }}
+                            />
+                          </div>
+                        ) : null}
                       </div>
 
                       {/* Part name/number */}
-                      <div className="space-y-2">
+                      {matches("part name") || matches("part number") ? (
+                        <div className="space-y-2">
                         <div className="text-xs font-medium text-muted-foreground">
                           Part name / number
                         </div>
@@ -736,19 +873,19 @@ export function InventorySubnav() {
                               </div>
                             ))}
                         </div>
-                      </div>
+                        </div>
+                      ) : null}
 
-                      {/* Suggested action */}
-                      <div className="space-y-2">
+                      {/* Opportunity type */}
+                      {matches("opportunity type") || matches("suggested action") ? (
+                        <div className="space-y-2">
                         <div className="text-xs font-medium text-muted-foreground">
-                          Suggested action
+                          Opportunity type
                         </div>
                         <div className="rounded-md border">
                           {(() => {
-                            const allActions = Array.from(new Set(filterOptions.map((o) => o.suggestedAction)))
-                              .filter(Boolean)
-                              .sort() as Opportunity["suggestedAction"][]
-                            const allSelected = allActions.length > 0 && allActions.every((action) => filters.suggestedActions.includes(action))
+                            const allTypes = OPPORTUNITY_TYPE_OPTIONS
+                            const allSelected = allTypes.length > 0 && allTypes.every((action) => filters.suggestedActions.includes(action))
                             const someSelected = filters.suggestedActions.length > 0 && !allSelected
                             
                             return (
@@ -760,7 +897,7 @@ export function InventorySubnav() {
                                   if (allSelected) {
                                     setFilters((prev) => ({ ...prev, suggestedActions: [] }))
                                   } else {
-                                    setFilters((prev) => ({ ...prev, suggestedActions: allActions }))
+                                    setFilters((prev) => ({ ...prev, suggestedActions: [...allTypes] }))
                                   }
                                 }}
                                 onKeyDown={(e) => {
@@ -769,7 +906,7 @@ export function InventorySubnav() {
                                     if (allSelected) {
                                       setFilters((prev) => ({ ...prev, suggestedActions: [] }))
                                     } else {
-                                      setFilters((prev) => ({ ...prev, suggestedActions: allActions }))
+                                      setFilters((prev) => ({ ...prev, suggestedActions: [...allTypes] }))
                                     }
                                   }
                                 }}
@@ -782,14 +919,11 @@ export function InventorySubnav() {
                                   checked={allSelected}
                                   className={someSelected ? "data-[state=checked]:bg-primary/50" : ""}
                                 />
-                                <span>All actions</span>
+                                <span>All types</span>
                               </div>
                             )
                           })()}
-                          {Array.from(new Set(filterOptions.map((o) => o.suggestedAction)))
-                            .filter(Boolean)
-                            .sort()
-                            .map((action) => (
+                          {OPPORTUNITY_TYPE_OPTIONS.map((action) => (
                               <div
                                 key={action}
                                 role="button"
@@ -826,10 +960,12 @@ export function InventorySubnav() {
                               </div>
                             ))}
                         </div>
-                      </div>
+                        </div>
+                      ) : null}
 
                       {/* Customer */}
-                      <div className="space-y-2">
+                      {matches("customer") ? (
+                        <div className="space-y-2">
                         <div className="text-xs font-medium text-muted-foreground">Customer</div>
                         <div className="rounded-md border">
                           {(() => {
@@ -904,10 +1040,12 @@ export function InventorySubnav() {
                               </div>
                             ))}
                         </div>
-                      </div>
+                        </div>
+                      ) : null}
 
                       {/* Esc. level */}
-                      <div className="space-y-2">
+                      {matches("esc") || matches("level") ? (
+                        <div className="space-y-2">
                         <div className="text-xs font-medium text-muted-foreground">Esc. level</div>
                         <div className="rounded-md border">
                           {(() => {
@@ -983,10 +1121,12 @@ export function InventorySubnav() {
                             </div>
                           ))}
                         </div>
-                      </div>
+                        </div>
+                      ) : null}
 
                       {/* Status */}
-                      <div className="space-y-2">
+                      {matches("status") ? (
+                        <div className="space-y-2">
                         <div className="text-xs font-medium text-muted-foreground">Status</div>
                         <div className="rounded-md border">
                           {(() => {
@@ -1076,126 +1216,498 @@ export function InventorySubnav() {
                             </div>
                           ))}
                         </div>
+                        </div>
+                      ) : null}
+
+                      {/* Suggested Date */}
+                      {matches("suggested date") ? (
+                        <div className="space-y-2">
+                          <div className="text-xs font-medium text-muted-foreground">Suggested date</div>
+                          <Popover open={suggestedOpen} onOpenChange={setSuggestedOpen}>
+                            <PopoverTrigger asChild>
+                              <Button
+                                variant="outline"
+                                className="h-9 w-full justify-between bg-white px-3 text-sm"
+                              >
+                                <span
+                                  className={
+                                    filters.suggestedDateRange.from ||
+                                    filters.suggestedDateRange.to
+                                      ? "text-foreground"
+                                      : "text-muted-foreground"
+                                  }
+                                >
+                                  {suggestedLabel}
+                                </span>
+                                <CalendarIcon className="h-4 w-4 text-muted-foreground" />
+                              </Button>
+                            </PopoverTrigger>
+                            <PopoverContent align="start" className="w-auto p-0">
+                              <Calendar
+                                mode="range"
+                                numberOfMonths={2}
+                                selected={suggestedRange}
+                                onDayClick={(day) => {
+                                  const clicked = new Date(day)
+                                  clicked.setHours(0, 0, 0, 0)
+                                  const from = filters.suggestedDateRange.from
+                                  const to = filters.suggestedDateRange.to
+
+                                  if (!from || to) {
+                                    setFilters((prev) => ({
+                                      ...prev,
+                                      suggestedDateRange: { from: clicked, to: undefined },
+                                    }))
+                                    return
+                                  }
+
+                                  const start = new Date(from)
+                                  start.setHours(0, 0, 0, 0)
+
+                                  if (clicked.getTime() < start.getTime()) {
+                                    setFilters((prev) => ({
+                                      ...prev,
+                                      suggestedDateRange: { from: clicked, to: undefined },
+                                    }))
+                                    return
+                                  }
+
+                                  setFilters((prev) => ({
+                                    ...prev,
+                                    suggestedDateRange: { from: start, to: clicked },
+                                  }))
+                                  setSuggestedOpen(false)
+                                }}
+                              />
+                              {filters.suggestedDateRange.from && !filters.suggestedDateRange.to ? (
+                                <div className="px-4 pb-3 text-xs text-muted-foreground">
+                                  Select an end date
+                                </div>
+                              ) : null}
+                              {filters.suggestedDateRange.from || filters.suggestedDateRange.to ? (
+                                <div className="px-4 pb-3 pt-2">
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="h-7 px-2 text-xs"
+                                    onClick={() =>
+                                      setFilters((prev) => ({
+                                        ...prev,
+                                        suggestedDateRange: { from: undefined, to: undefined },
+                                      }))
+                                    }
+                                  >
+                                    Clear range
+                                  </Button>
+                                </div>
+                              ) : null}
+                            </PopoverContent>
+                          </Popover>
+                        </div>
+                      ) : null}
+
+                    {/* Time to Act */}
+                      {matches("time to act") ? (
+                        <div className="space-y-2">
+                      <div className="text-xs font-medium text-muted-foreground">Time to Act</div>
+                      <div className="rounded-md border">
+                        {(() => {
+                          const allRanges = ["late", "lt7", "lt14", "gte14"] as const
+                          const allSelected =
+                            allRanges.length > 0 &&
+                            allRanges.every((range) => filters.timeToAct.includes(range))
+                          const someSelected = filters.timeToAct.length > 0 && !allSelected
+
+                          return (
+                            <div
+                              role="button"
+                              tabIndex={0}
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                if (allSelected) {
+                                  setFilters((prev) => ({ ...prev, timeToAct: [] }))
+                                } else {
+                                  setFilters((prev) => ({ ...prev, timeToAct: [...allRanges] }))
+                                }
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter" || e.key === " ") {
+                                  e.preventDefault()
+                                  if (allSelected) {
+                                    setFilters((prev) => ({ ...prev, timeToAct: [] }))
+                                  } else {
+                                    setFilters((prev) => ({ ...prev, timeToAct: [...allRanges] }))
+                                  }
+                                }
+                              }}
+                              className={cn(
+                                "flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-accent",
+                                filters.timeToAct.length === 0 && "bg-accent"
+                              )}
+                            >
+                              <Checkbox
+                                checked={allSelected}
+                                className={someSelected ? "data-[state=checked]:bg-primary/50" : ""}
+                              />
+                              <span>All ranges</span>
+                            </div>
+                          )
+                        })()}
+                        {[
+                          { value: "late", label: "Late" },
+                          { value: "lt7", label: "< 7 days" },
+                          { value: "lt14", label: "< 14 days" },
+                          { value: "gte14", label: "≥ 14 days" },
+                        ].map((range) => (
+                          <div
+                            key={range.value}
+                            role="button"
+                            tabIndex={0}
+                            onClick={() =>
+                              setFilters((prev) => ({
+                                ...prev,
+                                timeToAct: toggleValue(
+                                  prev.timeToAct,
+                                  range.value as OpportunityFilters["timeToAct"][number]
+                                ),
+                              }))
+                            }
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" || e.key === " ") {
+                                e.preventDefault()
+                                setFilters((prev) => ({
+                                  ...prev,
+                                  timeToAct: toggleValue(
+                                    prev.timeToAct,
+                                    range.value as OpportunityFilters["timeToAct"][number]
+                                  ),
+                                }))
+                              }
+                            }}
+                            className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-accent"
+                          >
+                            <Checkbox
+                              checked={filters.timeToAct.includes(
+                                range.value as OpportunityFilters["timeToAct"][number]
+                              )}
+                            />
+                            <span>{range.label}</span>
+                          </div>
+                        ))}
                       </div>
+                        </div>
+                      ) : null}
+
+                    {/* Age */}
+                      {matches("age") ? (
+                        <div className="space-y-2">
+                      <div className="text-xs font-medium text-muted-foreground">Age</div>
+                      <div className="rounded-md border">
+                        {(() => {
+                          const allRanges = ["lt7", "d7to14", "d15to30", "gt30"] as const
+                          const allSelected =
+                            allRanges.length > 0 &&
+                            allRanges.every((range) => filters.ageRanges.includes(range))
+                          const someSelected = filters.ageRanges.length > 0 && !allSelected
+
+                          return (
+                            <div
+                              role="button"
+                              tabIndex={0}
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                if (allSelected) {
+                                  setFilters((prev) => ({ ...prev, ageRanges: [] }))
+                                } else {
+                                  setFilters((prev) => ({ ...prev, ageRanges: [...allRanges] }))
+                                }
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter" || e.key === " ") {
+                                  e.preventDefault()
+                                  if (allSelected) {
+                                    setFilters((prev) => ({ ...prev, ageRanges: [] }))
+                                  } else {
+                                    setFilters((prev) => ({ ...prev, ageRanges: [...allRanges] }))
+                                  }
+                                }
+                              }}
+                              className={cn(
+                                "flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-accent",
+                                filters.ageRanges.length === 0 && "bg-accent"
+                              )}
+                            >
+                              <Checkbox
+                                checked={allSelected}
+                                className={someSelected ? "data-[state=checked]:bg-primary/50" : ""}
+                              />
+                              <span>All ages</span>
+                            </div>
+                          )
+                        })()}
+                        {[
+                          { value: "lt7", label: "< 7 days" },
+                          { value: "d7to14", label: "7-14 days" },
+                          { value: "d15to30", label: "15-30 days" },
+                          { value: "gt30", label: "> 30 days" },
+                        ].map((range) => (
+                          <div
+                            key={range.value}
+                            role="button"
+                            tabIndex={0}
+                            onClick={() =>
+                              setFilters((prev) => ({
+                                ...prev,
+                                ageRanges: toggleValue(
+                                  prev.ageRanges,
+                                  range.value as OpportunityFilters["ageRanges"][number]
+                                ),
+                              }))
+                            }
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" || e.key === " ") {
+                                e.preventDefault()
+                                setFilters((prev) => ({
+                                  ...prev,
+                                  ageRanges: toggleValue(
+                                    prev.ageRanges,
+                                    range.value as OpportunityFilters["ageRanges"][number]
+                                  ),
+                                }))
+                              }
+                            }}
+                            className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-accent"
+                          >
+                            <Checkbox
+                              checked={filters.ageRanges.includes(
+                                range.value as OpportunityFilters["ageRanges"][number]
+                              )}
+                            />
+                            <span>{range.label}</span>
+                          </div>
+                        ))}
+                      </div>
+                        </div>
+                      ) : null}
+
+                    {/* Time to Start */}
+                    {matches("time to start") ? (
+                    <div className="space-y-2">
+                      <div className="text-xs font-medium text-muted-foreground">Time to Start</div>
+                      <div className="rounded-md border">
+                        {(() => {
+                          const allRanges = ["lt3", "d3to7", "d8to14", "gt14"] as const
+                          const allSelected =
+                            allRanges.length > 0 &&
+                            allRanges.every((range) => filters.timeToStartRanges.includes(range))
+                          const someSelected = filters.timeToStartRanges.length > 0 && !allSelected
+
+                          return (
+                            <div
+                              role="button"
+                              tabIndex={0}
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                if (allSelected) {
+                                  setFilters((prev) => ({ ...prev, timeToStartRanges: [] }))
+                                } else {
+                                  setFilters((prev) => ({
+                                    ...prev,
+                                    timeToStartRanges: [...allRanges],
+                                  }))
+                                }
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter" || e.key === " ") {
+                                  e.preventDefault()
+                                  if (allSelected) {
+                                    setFilters((prev) => ({ ...prev, timeToStartRanges: [] }))
+                                  } else {
+                                    setFilters((prev) => ({
+                                      ...prev,
+                                      timeToStartRanges: [...allRanges],
+                                    }))
+                                  }
+                                }
+                              }}
+                              className={cn(
+                                "flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-accent",
+                                filters.timeToStartRanges.length === 0 && "bg-accent"
+                              )}
+                            >
+                              <Checkbox
+                                checked={allSelected}
+                                className={someSelected ? "data-[state=checked]:bg-primary/50" : ""}
+                              />
+                              <span>All ranges</span>
+                            </div>
+                          )
+                        })()}
+                        {[
+                          { value: "lt3", label: "< 3 days" },
+                          { value: "d3to7", label: "3-7 days" },
+                          { value: "d8to14", label: "8-14 days" },
+                          { value: "gt14", label: "> 14 days" },
+                        ].map((range) => (
+                          <div
+                            key={range.value}
+                            role="button"
+                            tabIndex={0}
+                            onClick={() =>
+                              setFilters((prev) => ({
+                                ...prev,
+                                timeToStartRanges: toggleValue(
+                                  prev.timeToStartRanges,
+                                  range.value as OpportunityFilters["timeToStartRanges"][number]
+                                ),
+                              }))
+                            }
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" || e.key === " ") {
+                                e.preventDefault()
+                                setFilters((prev) => ({
+                                  ...prev,
+                                  timeToStartRanges: toggleValue(
+                                    prev.timeToStartRanges,
+                                    range.value as OpportunityFilters["timeToStartRanges"][number]
+                                  ),
+                                }))
+                              }
+                            }}
+                            className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-accent"
+                          >
+                            <Checkbox
+                              checked={filters.timeToStartRanges.includes(
+                                range.value as OpportunityFilters["timeToStartRanges"][number]
+                              )}
+                            />
+                            <span>{range.label}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                    ) : null}
+
+                    {/* In Progress */}
+                    {matches("in progress") ? (
+                    <div className="space-y-2">
+                      <div className="text-xs font-medium text-muted-foreground">In Progress</div>
+                      <div className="rounded-md border">
+                        {(() => {
+                          const allRanges = ["lt7", "d7to14", "d15to21", "gt21"] as const
+                          const allSelected =
+                            allRanges.length > 0 &&
+                            allRanges.every((range) => filters.inProgressRanges.includes(range))
+                          const someSelected = filters.inProgressRanges.length > 0 && !allSelected
+
+                          return (
+                            <div
+                              role="button"
+                              tabIndex={0}
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                if (allSelected) {
+                                  setFilters((prev) => ({ ...prev, inProgressRanges: [] }))
+                                } else {
+                                  setFilters((prev) => ({
+                                    ...prev,
+                                    inProgressRanges: [...allRanges],
+                                  }))
+                                }
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter" || e.key === " ") {
+                                  e.preventDefault()
+                                  if (allSelected) {
+                                    setFilters((prev) => ({ ...prev, inProgressRanges: [] }))
+                                  } else {
+                                    setFilters((prev) => ({
+                                      ...prev,
+                                      inProgressRanges: [...allRanges],
+                                    }))
+                                  }
+                                }
+                              }}
+                              className={cn(
+                                "flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-accent",
+                                filters.inProgressRanges.length === 0 && "bg-accent"
+                              )}
+                            >
+                              <Checkbox
+                                checked={allSelected}
+                                className={someSelected ? "data-[state=checked]:bg-primary/50" : ""}
+                              />
+                              <span>All ranges</span>
+                            </div>
+                          )
+                        })()}
+                        {[
+                          { value: "lt7", label: "< 7 days" },
+                          { value: "d7to14", label: "7-14 days" },
+                          { value: "d15to21", label: "15-21 days" },
+                          { value: "gt21", label: "> 21 days" },
+                        ].map((range) => (
+                          <div
+                            key={range.value}
+                            role="button"
+                            tabIndex={0}
+                            onClick={() =>
+                              setFilters((prev) => ({
+                                ...prev,
+                                inProgressRanges: toggleValue(
+                                  prev.inProgressRanges,
+                                  range.value as OpportunityFilters["inProgressRanges"][number]
+                                ),
+                              }))
+                            }
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" || e.key === " ") {
+                                e.preventDefault()
+                                setFilters((prev) => ({
+                                  ...prev,
+                                  inProgressRanges: toggleValue(
+                                    prev.inProgressRanges,
+                                    range.value as OpportunityFilters["inProgressRanges"][number]
+                                  ),
+                                }))
+                              }
+                            }}
+                            className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-accent"
+                          >
+                            <Checkbox
+                              checked={filters.inProgressRanges.includes(
+                                range.value as OpportunityFilters["inProgressRanges"][number]
+                              )}
+                            />
+                            <span>{range.label}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                    ) : null}
+                          </>
+                        )
+                      })()}
                     </div>
                   </PopoverContent>
                 </Popover>
 
-                  <div className="h-4 w-px bg-[#E5E7EB]" />
-                  <div className="flex items-center gap-2">
-                    <Select
-                      value={timeframePreset}
-                      onValueChange={(v) => {
-                        const key = v as PresetKey
-                        setTimeframePreset(key)
-                        if (key === "custom") {
-                          setDateRange({ from: undefined, to: undefined })
-                          setCustomOpen(true)
-                          return
-                        }
-                        setCustomOpen(false)
-                        setDateRange(rangeFromPreset(key))
-                      }}
-                    >
-                      <SelectTrigger className="h-10 w-[260px] bg-white px-3">
-                        <div className="flex flex-col items-start leading-tight">
-                          <span className="text-xs text-muted-foreground">Timeframe</span>
-                          <span className="relative text-sm font-medium text-foreground">
-                            <SelectValue
-                              className={timeframePreset === "custom" ? "opacity-0" : ""}
-                            />
-                            {timeframePreset === "custom" ? (
-                              <span className="absolute inset-0 pointer-events-none">
-                                {customLabel}
-                              </span>
-                            ) : null}
-                          </span>
-                        </div>
-                      </SelectTrigger>
-
-                      <SelectContent align="start">
-                        <SelectItem value="current">Current</SelectItem>
-
-                        <div className="px-2 py-2 text-xs font-medium text-muted-foreground">
-                          Projected
-                        </div>
-
-                        <SelectItem value="eom">End of Month</SelectItem>
-                        <SelectItem value="eoq">End of Quarter</SelectItem>
-                        <SelectItem value="eoy">End of Year</SelectItem>
-                        <SelectItem value="custom">Custom</SelectItem>
-                      </SelectContent>
-                    </Select>
-
-                    {timeframePreset === "custom" ? (
-                      <Popover
-                        open={customOpen}
-                        onOpenChange={(open) => {
-                          if (!open && (!dateRange.from || !dateRange.to)) return
-                          setCustomOpen(open)
-                        }}
-                      >
-                        <PopoverTrigger asChild>
-                          <Button
-                            variant="outline"
-                            size="icon"
-                            className="h-10 w-10 bg-white"
-                            aria-label="Pick custom date range"
-                          >
-                            <CalendarIcon className="h-4 w-4 text-muted-foreground" />
-                          </Button>
-                        </PopoverTrigger>
-                        <PopoverContent align="start" className="w-auto p-0">
-                          <Calendar
-                            mode="range"
-                            numberOfMonths={2}
-                            selected={calendarRange}
-                            disabled={{ before: todayStart }}
-                            onDayClick={(day) => {
-                              const clicked = new Date(day)
-                              clicked.setHours(0, 0, 0, 0)
-
-                              if (clicked.getTime() < todayStart.getTime()) return
-
-                              if (!dateRange.from || (dateRange.from && dateRange.to)) {
-                                setDateRange({ from: clicked, to: undefined })
-                                setTimeframePreset("custom")
-                                return
-                              }
-
-                              const start = new Date(dateRange.from)
-                              start.setHours(0, 0, 0, 0)
-
-                              if (clicked.getTime() < start.getTime()) {
-                                setDateRange({ from: clicked, to: undefined })
-                                setTimeframePreset("custom")
-                                return
-                              }
-
-                              setDateRange({ from: start, to: clicked })
-                              setTimeframePreset("custom")
-                              setCustomOpen(false)
-                            }}
-                          />
-                          {dateRange.from && !dateRange.to ? (
-                            <div className="px-4 pb-3 text-xs text-muted-foreground">
-                              Select an end date
-                            </div>
-                          ) : null}
-                        </PopoverContent>
-                      </Popover>
-                    ) : null}
-                  </div>
                 </div>
-                <div className="flex items-center gap-4">
+    <div className="flex items-center gap-4">
                   {isOpportunities ? (
-                    <Button
-                      variant="outline"
-                      className="h-10 bg-white"
-                      onClick={() => setOpenSnoozeRules(true)}
-                    >
-                      Manage snooze rules
-                    </Button>
+                    <>
+                      <Suspense fallback={<div className="h-10 w-[140px] rounded-md border bg-muted/30" />}>
+                        <OpportunitiesGroupByControl />
+                      </Suspense>
+                      <Button
+                        variant="outline"
+                        className="h-10 bg-white"
+                        onClick={() => setOpenSnoozeRules(true)}
+                      >
+                        <PauseCircle className="mr-2 h-4 w-4 shrink-0 text-muted-foreground" />
+                        Manage snooze rules
+                      </Button>
+                    </>
                   ) : null}
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>

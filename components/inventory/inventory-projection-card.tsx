@@ -2,31 +2,77 @@
 
 import * as React from "react"
 import {
+  Bar,
   CartesianGrid,
+  ComposedChart,
+  Legend,
   Line,
-  LineChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
-  Legend,
 } from "recharts"
 import { WidgetCard } from "@/components/inventory/kpi-card"
 import { BottomSheetModal } from "@/components/inventory/bottom-sheet-modal"
 import { OpportunitiesTable } from "@/components/opportunities/opportunities-table"
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Button } from "@/components/ui/button"
-import { MoreHorizontal } from "lucide-react"
+import { MoreHorizontal, Layers } from "lucide-react"
 import { useInventoryData } from "@/components/inventory/inventory-data-provider"
 import {
   buildProjectionOpps,
   buildProjectionSeries,
   type ProjectionPoint,
 } from "@/components/inventory/projection-series"
+import { buildProjectedBreakdownSeries } from "@/lib/inventory/projected-breakdown"
+import {
+  STACK_BY_OPTIONS,
+  PLANTS,
+  WAREHOUSES,
+  WAREHOUSE_KEYS,
+  STATUS_OPTIONS,
+  CUSTOM_FIELD_OPTIONS,
+  getSegmentOptions,
+  type StackByKey,
+} from "@/lib/inventory/chart-group-options"
+import { cn } from "@/lib/utils"
+import { STACKED_BAR_TEAL } from "@/lib/charts/colors"
 
-type ViewMode = "quarter" | "month"
+type ViewMode = "quarter" | "month" | "week" | "day"
 type ChartMode = "snapshot" | "projection"
+
+/** Stack-by options for projection card: None + shared options. Default is Type. */
+const PROJECTION_STACK_BY_OPTIONS = [
+  { key: "none" as const, label: "None" },
+  ...STACK_BY_OPTIONS,
+]
+type ProjectionStackByKey = (typeof PROJECTION_STACK_BY_OPTIONS)[number]["key"]
+
+function splitBySeed(totalK: number, seedKey: string, count: number): number[] {
+  let hash = 0
+  for (let i = 0; i < seedKey.length; i++) hash = (hash * 31 + seedKey.charCodeAt(i)) | 0
+  const rand = () => {
+    hash = (hash * 1103515245 + 12345) >>> 0
+    return (hash >>> 16) / 65536
+  }
+  const ratios: number[] = []
+  for (let i = 0; i < count; i++) {
+    ratios.push(0.15 + rand() * 0.25)
+  }
+  const sum = ratios.reduce((a, b) => a + b, 0)
+  const out = ratios.map((r) => Math.round((totalK * r) / sum))
+  const diff = totalK - out.reduce((a, b) => a + b, 0)
+  if (diff !== 0) out[0] = Math.max(0, (out[0] ?? 0) + diff)
+  return out
+}
 
 function formatKeur(v: number) {
   if (v >= 1000) return `${(v / 1000).toFixed(1)} M€`
@@ -55,6 +101,39 @@ function tooltipValueFormatter(value: any) {
   return formatKeur(n)
 }
 
+/** Single teal hue, differentiated by lightness (same palette for Type, Storage location, Status). */
+const STAGE_COLORS = STACKED_BAR_TEAL
+const TEAL_SHADES = [
+  STACKED_BAR_TEAL.raw_material,
+  STACKED_BAR_TEAL.wip,
+  STACKED_BAR_TEAL.rotables,
+  STACKED_BAR_TEAL.finished_goods,
+] as const
+/** Colors for warehouse (storage location) bars – same teal palette as Type. */
+const WAREHOUSE_COLORS: Record<string, string> = Object.fromEntries(
+  WAREHOUSE_KEYS.map((key, i) => [key, TEAL_SHADES[i % TEAL_SHADES.length]])
+)
+/** Colors for plant bars – same teal palette as Type. */
+const PLANT_COLORS: Record<string, string> = Object.fromEntries(
+  PLANTS.map((p, i) => [`plant_${p}K`, TEAL_SHADES[i % TEAL_SHADES.length]])
+)
+/** Colors for status bars – same teal palette as Type. */
+const STATUS_BAR_COLORS: Record<string, string> = Object.fromEntries(
+  STATUS_OPTIONS.map((opt, i) => [opt.key, TEAL_SHADES[i % TEAL_SHADES.length]])
+)
+/** Colors for custom field bars. */
+const CUSTOM_FIELD_COLORS: Record<string, string> = Object.fromEntries(
+  CUSTOM_FIELD_OPTIONS.map((opt, i) => [opt.key, TEAL_SHADES[i % TEAL_SHADES.length]])
+)
+/** 1px separator between stacked segments (white at low opacity). */
+const BAR_SEPARATOR_STROKE = "rgba(255,255,255,0.55)"
+
+const LINE_COLORS = {
+  erp: "#19A7B0",
+  opp: "#19A7B0",
+  target: "#F59E0B",
+}
+
 function InventoryProjectionTooltip({
   active,
   payload,
@@ -74,69 +153,104 @@ function InventoryProjectionTooltip({
   const erp = byKey.get("erp")
   const opp = byKey.get("opp")
   const target = byKey.get("target")
+  const lineKeys = new Set(["erp", "opp", "target"])
+  const barEntries = payload.filter(
+    (p): p is { dataKey: string; value?: number; name?: string; color?: string } =>
+      p?.dataKey != null && !lineKeys.has(String(p.dataKey))
+  )
+  const hasBreakdown = barEntries.length > 0
 
   return (
-    <div className="rounded-xl border bg-white p-4 shadow-lg">
+    <div className="relative z-10 rounded-xl border bg-white p-4 shadow-lg">
       <div className="text-base font-semibold text-foreground">{label}</div>
 
       <div className="mt-3 space-y-3">
-        <div className="flex items-center justify-between gap-6">
-          <div className="flex items-center gap-2">
-            <span
-              className="inline-block w-7"
-              style={{
-                height: 0,
-                borderTop: "3px solid #19A7B0",
-                borderRadius: 999,
-              }}
-            />
-            <span className="text-sm font-medium text-foreground">
-              ERP plan
+        {erp != null ? (
+          <div className="flex items-center justify-between gap-6">
+            <div className="flex items-center gap-2">
+              <span
+                className="inline-block w-4"
+                style={{
+                  height: 0,
+                  borderTop: `2px solid ${LINE_COLORS.erp}`,
+                  borderRadius: 999,
+                }}
+              />
+              <span className="text-sm font-medium text-foreground">
+                Days Inventory Outstanding (DIO)
+              </span>
+            </div>
+            <span className="text-sm font-semibold text-foreground">
+              {tooltipValueFormatter(erp)}
             </span>
           </div>
-          <span className="text-sm font-semibold text-foreground">
-            {erp != null ? tooltipValueFormatter(erp) : "—"}
-          </span>
-        </div>
+        ) : null}
 
-        <div className="flex items-center justify-between gap-6">
-          <div className="flex items-center gap-2">
-            <span
-              className="inline-block w-7"
-              style={{
-                height: 0,
-                borderTop: "3px dashed #19A7B0",
-                borderRadius: 999,
-              }}
-            />
-            <span className="text-sm font-medium text-foreground">
-              With Opportunities
+        {opp != null ? (
+          <div className="flex items-center justify-between gap-6">
+            <div className="flex items-center gap-2">
+              <span
+                className="inline-block w-4"
+                style={{
+                  height: 0,
+                  borderTop: `2px dashed ${LINE_COLORS.opp}`,
+                  borderRadius: 999,
+                }}
+              />
+              <span className="text-sm font-medium text-foreground">
+                With Opportunities
+              </span>
+            </div>
+            <span className="text-sm font-semibold text-foreground">
+              {tooltipValueFormatter(opp)}
             </span>
           </div>
-          <span className="text-sm font-semibold text-foreground">
-            {opp != null ? tooltipValueFormatter(opp) : "—"}
-          </span>
-        </div>
+        ) : null}
 
-        <div className="flex items-center justify-between gap-6">
-          <div className="flex items-center gap-2">
-            <span
-              className="inline-block w-7"
-              style={{
-                height: 0,
-                borderTop: "3px solid #F59E0B",
-                borderRadius: 999,
-              }}
-            />
-            <span className="text-sm font-medium text-foreground">
-              Target
+        {target != null ? (
+          <div className="flex items-center justify-between gap-6">
+            <div className="flex items-center gap-2">
+              <span
+                className="inline-block w-4"
+                style={{
+                  height: 0,
+                  borderTop: `2px solid ${LINE_COLORS.target}`,
+                  borderRadius: 999,
+                }}
+              />
+              <span className="text-sm font-medium text-foreground">
+                Target DIO
+              </span>
+            </div>
+            <span className="text-sm font-semibold text-foreground">
+              {tooltipValueFormatter(target)}
             </span>
           </div>
-          <span className="text-sm font-semibold text-foreground">
-            {target != null ? tooltipValueFormatter(target) : "—"}
-          </span>
-        </div>
+        ) : null}
       </div>
+
+      {hasBreakdown ? (
+        <div className="mt-4 border-t pt-4">
+          <div className="space-y-3">
+            {barEntries.map((entry) => (
+              <div key={entry.dataKey} className="flex items-center justify-between gap-6">
+                <div className="flex items-center gap-2">
+                  <span
+                    className="inline-block h-2.5 w-2.5 rounded-full"
+                    style={{ backgroundColor: entry.color ?? "var(--muted)" }}
+                  />
+                  <span className="text-sm font-medium text-foreground">
+                    {entry.name ?? entry.dataKey}
+                  </span>
+                </div>
+                <span className="text-sm font-semibold text-foreground">
+                  {entry.value != null ? tooltipValueFormatter(entry.value) : "—"}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
     </div>
   )
 }
@@ -144,6 +258,9 @@ function InventoryProjectionTooltip({
 export function InventoryProjectionCard() {
   const [mode, setMode] = React.useState<ViewMode>("month")
   const [showTarget, setShowTarget] = React.useState(true)
+  const [showOpp, setShowOpp] = React.useState(true)
+  const [stackBy, setStackBy] = React.useState<ProjectionStackByKey>("type")
+  const [stackByOpen, setStackByOpen] = React.useState(false)
   const [open, setOpen] = React.useState(false)
   const [periodLabel, setPeriodLabel] = React.useState<string | null>(null)
   const [periodRange, setPeriodRange] = React.useState<{ from: Date; to: Date } | null>(null)
@@ -158,6 +275,36 @@ export function InventoryProjectionCard() {
   } = useInventoryData()
 
   const chartMode: ChartMode = timeframePreset === "current" ? "snapshot" : "projection"
+  const viewOptions = React.useMemo(() => {
+    if (timeframePreset === "eom") {
+      return [
+        { value: "week" as const, label: "Week" },
+        { value: "day" as const, label: "Day" },
+      ]
+    }
+    if (timeframePreset === "eoq") {
+      return [
+        { value: "month" as const, label: "Month" },
+        { value: "week" as const, label: "Week" },
+      ]
+    }
+    if (timeframePreset === "eoy") {
+      return [
+        { value: "quarter" as const, label: "Quarter" },
+        { value: "month" as const, label: "Month" },
+      ]
+    }
+    return [
+      { value: "quarter" as const, label: "Quarter" },
+      { value: "month" as const, label: "Month" },
+    ]
+  }, [timeframePreset])
+
+  React.useEffect(() => {
+    if (!viewOptions.some((option) => option.value === mode)) {
+      setMode(viewOptions[0]?.value ?? "month")
+    }
+  }, [viewOptions, mode])
 
   const rangeFrom = React.useMemo(() => {
     if (chartMode === "snapshot") return startOfDay(now)
@@ -209,6 +356,40 @@ export function InventoryProjectionCard() {
     [chartMode, mode, opps, rangeFrom, rangeTo]
   )
 
+  const breakdownSeries = React.useMemo(() => buildProjectedBreakdownSeries(data), [data])
+
+  const chartData = React.useMemo(() => {
+    const base = data.map((point, index) => ({
+      ...point,
+      ...(breakdownSeries[index] ?? {}),
+    }))
+    return base.map((point) => {
+      const totalK = point.erp ?? 0
+      const seed = point.label ?? ""
+      const warehouseValues = splitBySeed(totalK, `${seed}-warehouse`, WAREHOUSES.length)
+      const plantValues = splitBySeed(totalK, `${seed}-plant`, PLANTS.length)
+      const statusValues = splitBySeed(totalK, `${seed}-status`, STATUS_OPTIONS.length)
+      const customFieldValues = splitBySeed(totalK, `${seed}-customField`, CUSTOM_FIELD_OPTIONS.length)
+      const warehouseEntries: Record<string, number> = {}
+      WAREHOUSE_KEYS.forEach((key, i) => {
+        warehouseEntries[key] = warehouseValues[i] ?? 0
+      })
+      const plantEntries: Record<string, number> = {}
+      PLANTS.forEach((plant, i) => {
+        plantEntries[`plant_${plant}K`] = plantValues[i] ?? 0
+      })
+      const statusEntries: Record<string, number> = {}
+      STATUS_OPTIONS.forEach((opt, i) => {
+        statusEntries[opt.key] = statusValues[i] ?? 0
+      })
+      const customFieldEntries: Record<string, number> = {}
+      CUSTOM_FIELD_OPTIONS.forEach((opt, i) => {
+        customFieldEntries[opt.key] = customFieldValues[i] ?? 0
+      })
+      return { ...point, ...warehouseEntries, ...plantEntries, ...statusEntries, ...customFieldEntries }
+    })
+  }, [data, breakdownSeries])
+
   const caption =
     chartMode === "snapshot"
       ? "Inventory as of today"
@@ -221,7 +402,9 @@ export function InventoryProjectionCard() {
       const point = data.find((p) => p.label === label)
       if (!point) return
 
-      if (mode === "month") {
+      const effectiveMode = mode === "quarter" ? "quarter" : "month"
+
+      if (effectiveMode === "month") {
         const from = new Date(point.date.getFullYear(), point.date.getMonth(), 1)
         const to = new Date(point.date.getFullYear(), point.date.getMonth() + 1, 0, 23, 59, 59, 999)
         setPeriodLabel(label)
@@ -257,22 +440,61 @@ export function InventoryProjectionCard() {
       tooltip={
         chartMode === "snapshot"
           ? "Inventory position as of today (snapshot)."
-          : "Comparison between ERP plan and projected inventory if all not-snoozed opportunities are applied."
+          : "DIO reflects Inventory Year on Year / Cost of Sales. Comparison with projected inventory if all not-snoozed opportunities are applied."
       }
       subtitle={caption}
       size="l"
+      className="h-full w-full"
       headerRight={
         <div className="flex items-center gap-2">
-          <Tabs value={mode} onValueChange={(v) => setMode(v as ViewMode)}>
-            <TabsList className="h-8">
-              <TabsTrigger value="quarter" className="px-3 text-xs">
-                Quarter
-              </TabsTrigger>
-              <TabsTrigger value="month" className="px-3 text-xs">
-                Month
-              </TabsTrigger>
-            </TabsList>
-          </Tabs>
+          <Select value={mode} onValueChange={(v) => setMode(v as ViewMode)}>
+            <SelectTrigger size="sm" className="h-8 w-[7rem] text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent align="end">
+              {viewOptions.map((option) => (
+                <SelectItem key={option.value} value={option.value} className="text-xs">
+                  {option.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Popover open={stackByOpen} onOpenChange={setStackByOpen}>
+            <PopoverTrigger asChild>
+              <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs">
+                <Layers className="h-3.5 w-3.5 shrink-0" />
+                <span className="min-w-0 truncate">
+                  Stack by: {PROJECTION_STACK_BY_OPTIONS.find((o) => o.key === stackBy)?.label ?? "Type"}
+                </span>
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent align="end" className="w-52 p-3">
+              <div className="text-xs font-medium text-muted-foreground mb-2">Stack by</div>
+              <div className="space-y-1">
+                {PROJECTION_STACK_BY_OPTIONS.map(({ key, label }) => (
+                  <label
+                    key={key}
+                    className={cn(
+                      "flex items-center gap-2 cursor-pointer rounded-md px-2 py-1.5 hover:bg-muted/60",
+                      stackBy === key && "bg-muted/60"
+                    )}
+                  >
+                    <input
+                      type="radio"
+                      name="stackBy"
+                      checked={stackBy === key}
+                      onChange={() => {
+                        setStackBy(key as ProjectionStackByKey)
+                        setStackByOpen(false)
+                      }}
+                      className="h-3.5 w-3.5 accent-foreground"
+                    />
+                    <span className="text-sm">{label}</span>
+                  </label>
+                ))}
+              </div>
+            </PopoverContent>
+          </Popover>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="ghost" size="icon" className="h-8 w-8">
@@ -280,23 +502,35 @@ export function InventoryProjectionCard() {
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={() => setShowOpp((prev) => !prev)}>
+                <span
+                  className="mr-2 inline-block w-4"
+                  style={{ height: 0, borderTop: `2px dashed ${LINE_COLORS.opp}` }}
+                />
+                {showOpp ? "Hide opportunities line" : "Show opportunities line"}
+              </DropdownMenuItem>
               <DropdownMenuItem onClick={() => setShowTarget((prev) => !prev)}>
-                {showTarget ? "Hide the target" : "Show the target"}
+                <span
+                  className="mr-2 inline-block w-4"
+                  style={{ height: 0, borderTop: `2px solid ${LINE_COLORS.target}` }}
+                />
+                {showTarget ? "Hide Target DIO" : "Show Target DIO"}
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
       }
     >
-      <div className="h-[280px] w-full">
+      <div className="flex-1 min-h-[320px] w-full">
         <ResponsiveContainer width="100%" height="100%">
-          <LineChart
-            data={data}
+          <ComposedChart
+            data={chartData}
             margin={{ top: 8, right: 8, left: 8, bottom: 8 }}
+            barSize={48}
             onClick={handleChartClick}
             style={{ cursor: chartMode === "snapshot" ? "default" : "pointer" }}
           >
-            <CartesianGrid vertical={true} horizontal={true} strokeDasharray="0" opacity={0.25} />
+            <CartesianGrid vertical={false} horizontal={true} strokeDasharray="0" opacity={0.25} />
 
             <XAxis
               dataKey="label"
@@ -305,7 +539,7 @@ export function InventoryProjectionCard() {
               tickMargin={10}
               interval="preserveStartEnd"
               minTickGap={18}
-              tick={{ fontSize: 12 }}
+              tick={{ fontSize: 12, fill: "#9CA3AF" }}
             />
 
             <YAxis
@@ -313,74 +547,234 @@ export function InventoryProjectionCard() {
               axisLine={false}
               tickMargin={10}
               width={50}
-              tick={{ fontSize: 12 }}
+              tick={{ fontSize: 12, fill: "#9CA3AF" }}
               tickFormatter={(v) => formatKeur(Number(v))}
             />
 
             <Tooltip
               content={<InventoryProjectionTooltip />}
               cursor={{ fill: "hsl(var(--muted))", opacity: 0.35 }}
-              wrapperStyle={{ outline: "none" }}
+              wrapperStyle={{ outline: "none", zIndex: 10 }}
             />
 
             <Legend
               verticalAlign="bottom"
               align="center"
-              wrapperStyle={{ paddingTop: 8 }}
-              iconType="plainline"
-              formatter={(value) => {
-                const label =
-                  value === "erp"
-                    ? chartMode === "snapshot"
-                      ? "ERP plan (today)"
-                      : "ERP plan"
-                    : value === "opp"
-                      ? chartMode === "snapshot"
-                        ? "Opportunities (potential)"
-                        : "With Opportunities"
-                      : value === "target"
-                        ? chartMode === "snapshot"
-                          ? "Target (today)"
-                          : "Target"
-                        : String(value)
+              wrapperStyle={{ paddingTop: 24 }}
+              content={({ payload }) => {
+                if (!payload?.length) return null
+                const items = payload.map((entry) => {
+                      const key = String(entry.dataKey)
+                      const label =
+                        key === "erp"
+                          ? chartMode === "snapshot"
+                            ? "DIO (today)"
+                            : "Days Inventory Outstanding (DIO)"
+                          : key === "opp"
+                            ? chartMode === "snapshot"
+                              ? "Opportunities (potential)"
+                              : "With Opportunities"
+                            : key === "target"
+                              ? chartMode === "snapshot"
+                                ? "Target DIO (today)"
+                                : "Target DIO"
+                              : entry.value ?? key
 
-                return <span className="text-sm text-muted-foreground">{label}</span>
+                      const isLine = key === "erp" || key === "opp" || key === "target"
+                      return (
+                        <div
+                          key={key}
+                          className="flex items-center gap-2"
+                          style={{ marginRight: 12 }}
+                        >
+                          {isLine ? (
+                            <span
+                              className="inline-block w-4"
+                              style={{
+                                height: 0,
+                                borderTop:
+                                  key === "opp"
+                                    ? `2px dashed ${LINE_COLORS.opp}`
+                                    : `2px solid ${key === "target" ? LINE_COLORS.target : LINE_COLORS.erp}`,
+                                borderRadius: 999,
+                              }}
+                            />
+                          ) : (
+                            <span
+                              className="inline-block h-2.5 w-2.5 rounded-full"
+                              style={{ backgroundColor: entry.color }}
+                            />
+                          )}
+                          <span className="text-sm text-muted-foreground">{label}</span>
+                        </div>
+                      )
+                    })
+
+                if (!items.length) return null
+                const last = items.length - 1
+                items[last] = React.cloneElement(items[last], { style: { marginRight: 0 } })
+
+                return (
+                  <div className="flex flex-wrap items-center justify-center gap-y-2">
+                    {items}
+                  </div>
+                )
               }}
             />
+
+            {stackBy === "none" && (
+                <Bar
+                  dataKey="totalK"
+                  name="Inventory"
+                  fill={STAGE_COLORS.finished_goods}
+                  radius={[4, 4, 0, 0]}
+                  stroke={BAR_SEPARATOR_STROKE}
+                  strokeWidth={1}
+                  maxBarSize={48}
+                />
+              )}
+            {stackBy === "type" && (
+                  <>
+                    <Bar
+                      dataKey="rawMaterialK"
+                      name="Raw Material"
+                      stackId="inventory"
+                      fill={STAGE_COLORS.raw_material}
+                      stroke={BAR_SEPARATOR_STROKE}
+                      strokeWidth={1}
+                      maxBarSize={48}
+                    />
+                    <Bar
+                      dataKey="wipK"
+                      name="WIP"
+                      stackId="inventory"
+                      fill={STAGE_COLORS.wip}
+                      stroke={BAR_SEPARATOR_STROKE}
+                      strokeWidth={1}
+                      maxBarSize={48}
+                    />
+                    <Bar
+                      dataKey="finishedGoodsK"
+                      name="Finished Goods"
+                      stackId="inventory"
+                      fill={STAGE_COLORS.finished_goods}
+                      radius={[4, 4, 0, 0]}
+                      stroke={BAR_SEPARATOR_STROKE}
+                      strokeWidth={1}
+                      maxBarSize={48}
+                    />
+                  </>
+                )}
+                {stackBy === "rotables" && (
+                  <Bar
+                    dataKey="rotablesK"
+                    name="Rotables"
+                    stackId="inventory"
+                    fill={STAGE_COLORS.rotables}
+                    radius={[4, 4, 0, 0]}
+                    stroke={BAR_SEPARATOR_STROKE}
+                    strokeWidth={1}
+                    maxBarSize={48}
+                  />
+                )}
+                {stackBy === "storageLocation" &&
+                  getSegmentOptions("storageLocation").map((seg, i) => (
+                    <Bar
+                      key={seg.key}
+                      dataKey={seg.key}
+                      name={seg.label}
+                      stackId="inventory"
+                      fill={WAREHOUSE_COLORS[seg.key]}
+                      stroke={BAR_SEPARATOR_STROKE}
+                      strokeWidth={1}
+                      maxBarSize={48}
+                      radius={i === WAREHOUSE_KEYS.length - 1 ? [4, 4, 0, 0] : undefined}
+                    />
+                  ))}
+                {stackBy === "plant" &&
+                  PLANTS.map((plant, i) => (
+                    <Bar
+                      key={plant}
+                      dataKey={`plant_${plant}K`}
+                      name={plant}
+                      stackId="inventory"
+                      fill={PLANT_COLORS[`plant_${plant}K`]}
+                      stroke={BAR_SEPARATOR_STROKE}
+                      strokeWidth={1}
+                      maxBarSize={48}
+                      radius={i === PLANTS.length - 1 ? [4, 4, 0, 0] : undefined}
+                    />
+                  ))}
+                {stackBy === "status" &&
+                  STATUS_OPTIONS.map((opt, i) => (
+                    <Bar
+                      key={opt.key}
+                      dataKey={opt.key}
+                      name={opt.label}
+                      stackId="inventory"
+                      fill={STATUS_BAR_COLORS[opt.key]}
+                      stroke={BAR_SEPARATOR_STROKE}
+                      strokeWidth={1}
+                      maxBarSize={48}
+                      radius={i === STATUS_OPTIONS.length - 1 ? [4, 4, 0, 0] : undefined}
+                    />
+                  ))}
+                {stackBy === "customField" &&
+                  CUSTOM_FIELD_OPTIONS.map((opt, i) => (
+                    <Bar
+                      key={opt.key}
+                      dataKey={opt.key}
+                      name={opt.label}
+                      stackId="inventory"
+                      fill={CUSTOM_FIELD_COLORS[opt.key]}
+                      stroke={BAR_SEPARATOR_STROKE}
+                      strokeWidth={1}
+                      maxBarSize={48}
+                      radius={i === CUSTOM_FIELD_OPTIONS.length - 1 ? [4, 4, 0, 0] : undefined}
+                    />
+                  ))}
 
             <Line
               type="monotone"
               dataKey="erp"
-              stroke="#19A7B0"
+              stroke={LINE_COLORS.erp}
               strokeWidth={2.5}
-              dot={{ r: 4, stroke: "#ffffff", strokeWidth: 2, fill: "#19A7B0" }}
-              activeDot={{ r: 5, stroke: "#ffffff", strokeWidth: 4, fill: "#19A7B0" }}
+              dot={false}
+              activeDot={{ r: 4, stroke: "#ffffff", strokeWidth: 2, fill: LINE_COLORS.erp }}
               opacity={chartMode === "snapshot" ? 0.95 : 1}
             />
 
-            <Line
-              type="monotone"
-              dataKey="opp"
-              stroke="#19A7B0"
-              strokeWidth={2.5}
-              strokeDasharray="5 5"
-              dot={{ r: 4, stroke: "#ffffff", strokeWidth: 2, fill: "#19A7B0" }}
-              activeDot={{ r: 5, stroke: "#ffffff", strokeWidth: 4, fill: "#19A7B0" }}
-              opacity={chartMode === "snapshot" ? 0.45 : 1}
-            />
+            {showOpp ? (
+              <Line
+                type="monotone"
+                dataKey="opp"
+                stroke={LINE_COLORS.opp}
+                strokeWidth={2.5}
+                strokeDasharray="5 5"
+                dot={false}
+                activeDot={{
+                  r: 4,
+                  stroke: "#ffffff",
+                  strokeWidth: 2,
+                  strokeDasharray: "0",
+                  fill: LINE_COLORS.opp,
+                }}
+                opacity={chartMode === "snapshot" ? 0.45 : 1}
+              />
+            ) : null}
 
             {showTarget ? (
               <Line
                 type="monotone"
                 dataKey="target"
-                stroke="#F59E0B"
+                stroke={LINE_COLORS.target}
                 strokeWidth={2}
                 dot={false}
-                activeDot={false}
+                activeDot={{ r: 4, stroke: "#ffffff", strokeWidth: 2, fill: LINE_COLORS.target }}
                 opacity={chartMode === "snapshot" ? 0.7 : 1}
               />
             ) : null}
-          </LineChart>
+          </ComposedChart>
         </ResponsiveContainer>
       </div>
       <BottomSheetModal

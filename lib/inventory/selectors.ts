@@ -21,7 +21,7 @@ export function groupOpportunitiesByAction(opps: Opportunity[]): OpportunitiesBy
       acc[o.suggestedAction] = (acc[o.suggestedAction] ?? 0) + 1
       return acc
     },
-    { "Pull in": 0, Cancel: 0 } as OpportunitiesByAction
+    { "Pull in": 0, Cancel: 0, "Push Out": 0, STO: 0, "Scrap/Sell": 0 } as OpportunitiesByAction
   )
 }
 
@@ -46,24 +46,31 @@ export function computeHealthRiskKPIs(opps: Opportunity[], from?: Date, to?: Dat
   const total = opps.length
   const inProgress = opps.filter((o) => o.status === "In Progress").length
   const todo = opps.filter((o) => o.status === "To Do").length
+  const uselessCount = opps.filter(
+    (o) => o.status === "Canceled" || o.status === "Snoozed" || o.status === "Done"
+  ).length
 
   // € values: scale + relate to counts
   const inventoryEur = Math.round((total * 42000) * scale)
   const overstockEur = Math.round((todo * 38000) * scale)
   const understockEur = Math.round((inProgress * 22000) * scale)
+  const uselessStockEur = Math.round((uselessCount * 18000) * scale)
 
   // "parts" numbers
   const inventoryParts = Math.round((total * 120) * scale)
   const overstockParts = Math.round((todo * 90) * scale)
   const understockParts = Math.round((inProgress * 60) * scale)
+  const uselessStockParts = Math.round((uselessCount * 45) * scale)
 
   return {
     inventoryEur,
     overstockEur,
     understockEur,
+    uselessStockEur,
     inventoryParts,
     overstockParts,
     understockParts,
+    uselessStockParts,
   }
 }
 
