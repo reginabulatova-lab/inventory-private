@@ -129,7 +129,11 @@ function InventoryByGroupTooltip({
 }
 
 /** Legend below chart – same style as projected inventory widget. */
-function ChartLegend({ payload }: { payload?: { dataKey?: string; value?: string; color?: string }[] }) {
+function ChartLegend({
+  payload,
+}: {
+  payload?: { dataKey?: string | number; value?: string | number; color?: string }[]
+}) {
   if (!payload?.length) return null
   const items = payload
     .filter((e) => e.dataKey !== "name" && e.dataKey !== "value")
@@ -139,7 +143,7 @@ function ChartLegend({ payload }: { payload?: { dataKey?: string; value?: string
           className="inline-block h-2.5 w-2.5 rounded-full"
           style={{ backgroundColor: entry.color }}
         />
-        <span className="text-sm text-muted-foreground">{entry.value ?? entry.dataKey}</span>
+        <span className="text-sm text-muted-foreground">{String(entry.value ?? entry.dataKey ?? "")}</span>
       </div>
     ))
   if (!items.length) return null
@@ -412,6 +416,7 @@ export function InventoryByStatusChart() {
           <BarChart
             data={chartData}
             margin={{ top: 8, right: 8, left: 8, bottom: 4 }}
+            barCategoryGap="20%"
             onClick={() => setPartBookOpen(true)}
           >
             <CartesianGrid vertical={false} horizontal={true} strokeDasharray="0" opacity={0.25} />
@@ -443,7 +448,17 @@ export function InventoryByStatusChart() {
               verticalAlign="bottom"
               align="center"
               wrapperStyle={{ paddingTop: 8 }}
-              content={({ payload }) => <ChartLegend payload={payload} />}
+              content={({ payload }) => (
+                <ChartLegend
+                  payload={
+                    payload?.map((p) => ({
+                      dataKey: typeof p.dataKey === "string" || typeof p.dataKey === "number" ? p.dataKey : String(p.value ?? ""),
+                      value: p.value != null ? String(p.value) : undefined,
+                      color: p.color,
+                    }))
+                  }
+                />
+              )}
             />
             {stackBy && stackSegments.length > 0 ? (
               stackSegments.map((seg, i) => (
@@ -456,7 +471,6 @@ export function InventoryByStatusChart() {
                   stroke={BAR_SEPARATOR_STROKE}
                   strokeWidth={1}
                   maxBarSize={48}
-                  barCategoryGap="20%"
                   radius={i === stackSegments.length - 1 ? [4, 4, 0, 0] : undefined}
                 />
               ))
@@ -466,7 +480,6 @@ export function InventoryByStatusChart() {
                 fill={BAR_FILL}
                 radius={[4, 4, 0, 0]}
                 maxBarSize={48}
-                barCategoryGap="20%"
               />
             )}
           </BarChart>

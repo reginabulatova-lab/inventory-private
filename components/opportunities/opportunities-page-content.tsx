@@ -21,9 +21,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 const FILTER_KINDS = ["type", "status", "concentration"] as const
 type FilterKind = (typeof FILTER_KINDS)[number]
 
-export type OpportunityTypeView = "standard" | "sto" | "scrap-sell"
+export type OpportunityTypeView = "all" | "standard" | "sto" | "scrap-sell"
 
 const OPPORTUNITY_TYPE_TABS: { value: OpportunityTypeView; label: string }[] = [
+  { value: "all", label: "All" },
   { value: "standard", label: "Pull in, Push out & Cancel" },
   { value: "sto", label: "STO" },
   { value: "scrap-sell", label: "Scrap/Sell" },
@@ -63,7 +64,7 @@ export function OpportunitiesPageContent() {
 
   return (
     <div className="space-y-6">
-      <Tabs defaultValue="standard" className="w-full">
+      <Tabs defaultValue="all" className="w-full">
         <TabsList className="mb-4">
           {OPPORTUNITY_TYPE_TABS.map((tab) => (
             <TabsTrigger key={tab.value} value={tab.value}>

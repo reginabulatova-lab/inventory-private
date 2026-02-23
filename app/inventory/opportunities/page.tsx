@@ -4,7 +4,7 @@ import { InventorySubnav } from "@/components/inventory/inventory-subnav"
 import { OpportunitiesPageContent } from "@/components/opportunities/opportunities-page-content"
 import { FloatingAIChat } from "@/components/ai/floating-ai-chat"
 
-export default function OpportunitiesPage() {
+function OpportunitiesContent() {
   return (
     <div className="min-h-screen bg-[#F8F9FC]">
       {/* keep your existing header */}
@@ -20,5 +20,13 @@ export default function OpportunitiesPage() {
 
       <FloatingAIChat />
     </div>
+  )
+}
+
+export default function OpportunitiesPage() {
+  return (
+    <React.Suspense fallback={<div className="min-h-screen bg-[#F8F9FC]" />}>
+      <OpportunitiesContent />
+    </React.Suspense>
   )
 }

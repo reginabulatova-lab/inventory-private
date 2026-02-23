@@ -36,13 +36,11 @@ export function timeframeScale(from?: Date, to?: Date, referenceDays = 90) {
 }
 
 /**
- * Example KPI numbers derived from opportunities, without changing UI.
- * You can tune base multipliers later to feel realistic.
+ * Demo KPI: inventory from counts; overstock ~10%, understock less, dead stock ~5% of inventory.
  */
 export function computeHealthRiskKPIs(opps: Opportunity[], from?: Date, to?: Date) {
   const scale = timeframeScale(from, to, 90)
 
-  // base numbers derived from count; tune multipliers to feel realistic
   const total = opps.length
   const inProgress = opps.filter((o) => o.status === "In Progress").length
   const todo = opps.filter((o) => o.status === "To Do").length
@@ -50,17 +48,17 @@ export function computeHealthRiskKPIs(opps: Opportunity[], from?: Date, to?: Dat
     (o) => o.status === "Canceled" || o.status === "Snoozed" || o.status === "Done"
   ).length
 
-  // € values: scale + relate to counts
-  const inventoryEur = Math.round((total * 42000) * scale)
-  const overstockEur = Math.round((todo * 38000) * scale)
-  const understockEur = Math.round((inProgress * 22000) * scale)
-  const uselessStockEur = Math.round((uselessCount * 18000) * scale)
+  // Inventory from opportunity count; others as % of inventory for demo
+  const inventoryEur = Math.round((total * 95_000) * scale)
+  const overstockEur = Math.round(inventoryEur * 0.1)
+  const understockEur = Math.round(inventoryEur * 0.06)
+  const uselessStockEur = Math.round(inventoryEur * 0.05)
 
-  // "parts" numbers
+  // "parts" numbers (proportional for display)
   const inventoryParts = Math.round((total * 120) * scale)
-  const overstockParts = Math.round((todo * 90) * scale)
-  const understockParts = Math.round((inProgress * 60) * scale)
-  const uselessStockParts = Math.round((uselessCount * 45) * scale)
+  const overstockParts = Math.max(1, Math.round((todo * 90) * scale))
+  const understockParts = Math.max(1, Math.round((inProgress * 60) * scale))
+  const uselessStockParts = Math.max(1, Math.round((uselessCount * 45) * scale))
 
   return {
     inventoryEur,

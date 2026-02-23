@@ -408,29 +408,32 @@ export function HealthRiskSection() {
   const inventoryDelta = { ...inventoryDeltaComputed, label: "↓ 3%", tone: "down" as const }
   const overstockDelta = { ...overstockDeltaComputed, label: "↑ 3%", tone: "up" as const }
 
-  // Inventory Health widget: always current (snapshot) values and "current" target
-  const widgetInventoryTarget =
-    inventoryHealthWidgetKpis.inventoryEur * (1 + targetFallbackWidget.inventory.percent / 100)
-  const widgetOverstockTarget =
-    inventoryHealthWidgetKpis.overstockEur * (1 + targetFallbackWidget.overstock.percent / 100)
-  const widgetUnderstockTarget =
-    inventoryHealthWidgetKpis.understockEur * (1 + targetFallbackWidget.understock.percent / 100)
+  // Inventory Health widget: use opportunity-based KPIs (demo 10% / 6% / 5% of inventory)
+  const widgetInventoryEur = breakdownKpisWidget.inventoryEur
+  const widgetOverstockEur = breakdownKpisWidget.overstockEur
+  const widgetUnderstockEur = breakdownKpisWidget.understockEur
   const widgetUselessStockEur = breakdownKpisWidget.uselessStockEur
+  const widgetInventoryTarget =
+    widgetInventoryEur * (1 + targetFallbackWidget.inventory.percent / 100)
+  const widgetOverstockTarget =
+    widgetOverstockEur * (1 + targetFallbackWidget.overstock.percent / 100)
+  const widgetUnderstockTarget =
+    widgetUnderstockEur * (1 + targetFallbackWidget.understock.percent / 100)
   const widgetUselessStockTarget =
     widgetUselessStockEur * (1 + targetFallbackWidget.uselessStock.percent / 100)
 
   const widgetInventoryDelta = formatDelta(
-    inventoryHealthWidgetKpis.inventoryEur,
+    widgetInventoryEur,
     widgetInventoryTarget,
     targetFallbackWidget.inventory
   )
   const widgetOverstockDelta = formatDelta(
-    inventoryHealthWidgetKpis.overstockEur,
+    widgetOverstockEur,
     widgetOverstockTarget,
     targetFallbackWidget.overstock
   )
   const widgetUnderstockDelta = formatDelta(
-    inventoryHealthWidgetKpis.understockEur,
+    widgetUnderstockEur,
     widgetUnderstockTarget,
     targetFallbackWidget.understock
   )
@@ -439,7 +442,7 @@ export function HealthRiskSection() {
     widgetUselessStockTarget,
     targetFallbackWidget.uselessStock
   )
-  const hideUnderstockWidget = true
+  const hideUnderstockWidget = false
 
   const openDetails = React.useCallback((title: string) => {
     setActiveKpi(title)
@@ -476,19 +479,19 @@ export function HealthRiskSection() {
   const widgetKpiRows = [
     {
       title: "Inventory",
-      value: formatEurCompact(inventoryHealthWidgetKpis.inventoryEur),
+      value: formatEurCompact(widgetInventoryEur),
       key: "Inventory" as const,
       badge: widgetInventoryDelta,
     },
     {
       title: "Overstock",
-      value: formatEurCompact(inventoryHealthWidgetKpis.overstockEur),
+      value: formatEurCompact(widgetOverstockEur),
       key: "Overstock" as const,
       badge: widgetOverstockDelta,
     },
     {
       title: "Understock",
-      value: hideUnderstockWidget ? "—" : formatEurCompact(inventoryHealthWidgetKpis.understockEur),
+      value: hideUnderstockWidget ? "—" : formatEurCompact(widgetUnderstockEur),
       key: "Understock" as const,
       badge: widgetUnderstockDelta,
     },

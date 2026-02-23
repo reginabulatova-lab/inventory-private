@@ -78,7 +78,7 @@ export type OpportunitiesTableFilter =
   | { kind: "priority"; category: OpportunityPriority }
   | null
 
-export type OpportunityTypeView = "standard" | "sto" | "scrap-sell"
+export type OpportunityTypeView = "all" | "standard" | "sto" | "scrap-sell"
 
 const STANDARD_ACTIONS: Opportunity["suggestedAction"][] = ["Pull in", "Push Out", "Cancel"]
 
@@ -427,6 +427,8 @@ export function OpportunitiesTable({
     let res = scopedAll
     if (suggestedActionsFilter?.length) {
       res = res.filter((o) => suggestedActionsFilter.includes(o.suggestedAction))
+    } else if (opportunityTypeView === "all") {
+      // no filter by type — show all opportunity types
     } else if (opportunityTypeView === "standard") {
       res = res.filter((o) => STANDARD_ACTIONS.includes(o.suggestedAction))
     } else if (opportunityTypeView === "sto") {
@@ -836,7 +838,7 @@ export function OpportunitiesTable({
           showToolbar && selectedCount > 0 ? actionBarGapClass : ""
         }`}
       >
-        {opportunityTypeView === "sto" ? (
+        {opportunityTypeView === "all" ? (
           <Table>
             <TableHeader>
               <TableRow>
@@ -847,12 +849,218 @@ export function OpportunitiesTable({
                     aria-label="Select all"
                   />
                 </TableHead>
+                <TableHead>Opportunity type</TableHead>
+                <TableHead>Time to Act</TableHead>
+                <TableHead>Priority</TableHead>
+                <TableHead className="text-right">Value</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead>Team</TableHead>
+                <TableHead>Assignee</TableHead>
+                <TableHead>Order number</TableHead>
+                <TableHead>Esc.</TableHead>
+                <TableHead>Part Name</TableHead>
+                <TableHead>Part Number</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {displayedRowIds.map((rowId) => {
+                const r = rowById.get(rowId)
+                if (!r) return null
+                const meta = rowMeta.get(r.id)
+                return (
+                  <TableRow key={r.id} className={r.status === "Snoozed" ? "opacity-60" : ""}>
+                    <TableCell>
+                      <Checkbox
+                        checked={!!selected[r.id]}
+                        onCheckedChange={(v) =>
+                          setSelected((prev) => ({ ...prev, [r.id]: Boolean(v) }))
+                        }
+                        aria-label={`Select ${r.orderNumber}`}
+                      />
+                    </TableCell>
+                    <TableCell className="font-medium">{r.suggestedAction}</TableCell>
+                    <TableCell>
+                      <TimeToActBadge days={meta?.timeToActDays ?? null} />
+                    </TableCell>
+                    <TableCell>
+                      <Select
+                        value={resolveOpportunityPriority(r, now)}
+                        onValueChange={(value) =>
+                          setPriorityByIds([r.id], value as OpportunityPriority)
+                        }
+                      >
+                        <SelectTrigger className="h-8 w-[110px] border-0 bg-transparent px-2 text-xs font-semibold shadow-none hover:bg-muted/40 data-[state=open]:bg-muted/60">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent align="start">
+                          {PRIORITY_ORDER.map((priority) => (
+                            <SelectItem key={priority} value={priority}>
+                              <PriorityBadge value={priority} />
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </TableCell>
+                    <TableCell className="text-right">
+                      {formatEurCompact(meta?.inventoryValueEur ?? 0)}
+                    </TableCell>
+                    <TableCell>
+                      <Select
+                        value={r.status}
+                        onValueChange={(value) => {
+                          const nextStatus = value as Opportunity["status"]
+                          startTransition(() => setStatusByIds([r.id], nextStatus))
+                        }}
+                      >
+                        <SelectTrigger className="h-8 w-[150px] rounded-full border bg-muted/40 px-2 text-xs font-semibold shadow-none hover:bg-muted/60 data-[state=open]:bg-muted/70">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent align="start">
+                          <SelectItem value="Backlog"><StatusLabel status="Backlog" /></SelectItem>
+                          <SelectItem value="To Do"><StatusLabel status="To Do" /></SelectItem>
+                          <SelectItem value="In Progress"><StatusLabel status="In Progress" /></SelectItem>
+                          <SelectItem value="Done"><StatusLabel status="Done" /></SelectItem>
+                          <SelectItem value="Canceled"><StatusLabel status="Canceled" /></SelectItem>
+                          <SelectItem value="Snoozed"><StatusLabel status="Snoozed" /></SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </TableCell>
+                    <TableCell>
+                      <Select
+                        value={r.team || EMPTY_OPTION}
+                        onValueChange={(value) =>
+                          setTeamByIds([r.id], value === EMPTY_OPTION ? "" : value)
+                        }
+                      >
+                        <SelectTrigger className="h-8 w-[180px] border-0 bg-transparent px-2 text-sm shadow-none hover:bg-muted/40 data-[state=open]:bg-muted/60">
+                          <SelectValue placeholder="—" />
+                        </SelectTrigger>
+                        <SelectContent align="start">
+                          {teamOptions.map((team) => (
+                            <SelectItem key={team} value={team}>
+                              {team === EMPTY_OPTION ? "—" : team}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </TableCell>
+                    <TableCell>
+                      <Select
+                        value={r.assignee || EMPTY_OPTION}
+                        onValueChange={(value) =>
+                          setAssigneeByIds([r.id], value === EMPTY_OPTION ? "" : value)
+                        }
+                      >
+                        <SelectTrigger className="h-8 w-[160px] border-0 bg-transparent px-2 text-sm shadow-none hover:bg-muted/40 data-[state=open]:bg-muted/60">
+                          <SelectValue placeholder="—" />
+                        </SelectTrigger>
+                        <SelectContent align="start">
+                          {assigneeOptions.map((assignee) => (
+                            <SelectItem key={assignee} value={assignee}>
+                              {assignee === EMPTY_OPTION ? "—" : assignee}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </TableCell>
+                    <TableCell>
+                      <button
+                        type="button"
+                        className="font-medium text-blue-700 hover:text-blue-900"
+                        onClick={() => {
+                          setPanelRow(r)
+                          setOpenPanel(true)
+                        }}
+                      >
+                        {r.orderNumber}
+                      </button>
+                    </TableCell>
+                    <TableCell>
+                      {escalationTickets[r.partNumber] ? (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setActiveTicket(escalationTickets[r.partNumber] ?? null)
+                            setOpenTicketPanel(true)
+                          }}
+                          className="inline-flex"
+                          aria-label="View ticket"
+                        >
+                          <Badge className={ticketBadgeClass(escalationTickets[r.partNumber]!.level)}>
+                            L{escalationTickets[r.partNumber]!.level}
+                          </Badge>
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          className="inline-flex h-8 w-8 items-center justify-center rounded-md hover:bg-accent"
+                          onClick={() => {
+                            const ticket: EscalationTicket = {
+                              id: `TCK-${1000 + Number(r.id.replace(/\D/g, ""))}`,
+                              level: 1,
+                              createdAt: new Date().toISOString(),
+                              team: r.team || "Supply",
+                              partName: r.partName,
+                              partNumber: r.partNumber,
+                              description: "Escalation ticket created for part review.",
+                            }
+                            upsertEscalationTicket(ticket)
+                            setActiveTicket(ticket)
+                            setOpenTicketPanel(true)
+                          }}
+                          aria-label="Create ticket"
+                        >
+                          <Files className="h-4 w-4 text-muted-foreground" />
+                        </button>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      <button
+                        type="button"
+                        className="font-medium text-blue-700 hover:text-blue-900"
+                        onClick={() => {
+                          setPanelRow(r)
+                          setOpenPanel(true)
+                        }}
+                      >
+                        {r.partName}
+                      </button>
+                    </TableCell>
+                    <TableCell>
+                      <button
+                        type="button"
+                        className="font-medium text-blue-700 hover:text-blue-900"
+                        onClick={() => {
+                          setPanelRow(r)
+                          setOpenPanel(true)
+                        }}
+                      >
+                        {r.partNumber}
+                      </button>
+                    </TableCell>
+                  </TableRow>
+                )
+              })}
+            </TableBody>
+          </Table>
+        ) : opportunityTypeView === "sto" ? (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead className="w-[48px]">
+                  <Checkbox
+                    checked={allChecked ? true : indeterminate ? "indeterminate" : false}
+                    onCheckedChange={(v) => toggleAll(Boolean(v))}
+                    aria-label="Select all"
+                  />
+                </TableHead>
+                <TableHead>Opportunity type</TableHead>
                 <TableHead>Part Name</TableHead>
                 <TableHead>Part Number</TableHead>
                 <TableHead>Current Storage location</TableHead>
                 <TableHead>Target Storage location</TableHead>
                 <TableHead>Date of the STO</TableHead>
-                <TableHead className="text-right">Value at stake</TableHead>
+                <TableHead className="text-right">Value</TableHead>
                 <TableHead>Time to Act</TableHead>
                 <TableHead>Priority</TableHead>
                 <TableHead>Age</TableHead>
@@ -883,6 +1091,7 @@ export function OpportunitiesTable({
                         aria-label={`Select ${r.orderNumber}`}
                       />
                     </TableCell>
+                    <TableCell className="font-medium">STO</TableCell>
                     <TableCell>{r.partName}</TableCell>
                     <TableCell>{r.partNumber}</TableCell>
                     <TableCell>{r.currentStorageLocation ?? "—"}</TableCell>
@@ -1390,7 +1599,7 @@ export function OpportunitiesTable({
                   }}
                   className="inline-flex items-center gap-1 text-left"
                 >
-                  Inventory value
+                  Value
                   <ArrowDown
                     className={`h-3.5 w-3.5 text-muted-foreground transition-transform ${
                       sortKey === "inventory" && sortDir === "asc" ? "rotate-180" : ""
@@ -1753,7 +1962,7 @@ export function OpportunitiesTable({
                         </div>
                       </div>
                       <div>
-                        <div className="text-muted-foreground">Inventory value</div>
+                        <div className="text-muted-foreground">Value</div>
                         <div className="text-foreground">
                           {formatEurCompact(
                             useRawInventoryValue

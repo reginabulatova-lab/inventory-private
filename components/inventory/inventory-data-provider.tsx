@@ -277,7 +277,7 @@ type InventoryDataContextValue = {
 
 const InventoryDataContext = React.createContext<InventoryDataContextValue | null>(null)
 
-const LS_KEY = "inventory_opportunities_v4"
+const LS_KEY = "inventory_opportunities_v5"
 const LS_RULES_KEY = "inventory_snooze_rules_v1"
 const LS_TICKETS_KEY = "inventory_escalation_tickets_v1"
 

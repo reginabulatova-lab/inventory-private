@@ -546,7 +546,7 @@ export function InventoryProjectionCard() {
               tickLine={false}
               axisLine={false}
               tickMargin={10}
-              width={50}
+              width={58}
               tick={{ fontSize: 12, fill: "#9CA3AF" }}
               tickFormatter={(v) => formatKeur(Number(v))}
             />

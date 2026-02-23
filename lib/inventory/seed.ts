@@ -54,10 +54,10 @@ function weightedStatus(r: () => number): OpportunityStatus {
 
 function weightedAction(r: () => number): SuggestedAction {
   const x = r()
-  if (x < 0.32) return "Push Out"
-  if (x < 0.55) return "Cancel"
-  if (x < 0.77) return "Pull in"
-  if (x < 0.9) return "STO"
+  if (x < 0.26) return "Push Out"
+  if (x < 0.48) return "Cancel"
+  if (x < 0.76) return "Pull in"
+  if (x < 0.88) return "STO"
   return "Scrap/Sell"
 }
 
