@@ -14,7 +14,7 @@ import {
 } from "recharts"
 import { WidgetCard } from "@/components/inventory/kpi-card"
 import { BottomSheetModal } from "@/components/inventory/bottom-sheet-modal"
-import { OpportunitiesTable } from "@/components/opportunities/opportunities-table"
+import { PartbookTable } from "@/components/inventory/partbook-table"
 import {
   Select,
   SelectContent,
@@ -127,11 +127,46 @@ const CUSTOM_FIELD_COLORS: Record<string, string> = Object.fromEntries(
 )
 /** 1px separator between stacked segments (white at low opacity). */
 const BAR_SEPARATOR_STROKE = "rgba(255,255,255,0.55)"
+const PAST_DATA_OPACITY = 0.3
 
 const LINE_COLORS = {
   erp: "#19A7B0",
-  opp: "#19A7B0",
-  target: "#F59E0B",
+  opp: "#F59E0B",
+  target: "#19A7B0",
+}
+const LINE_WHITE_STROKE_OFFSET = 4
+
+/** Bar shape that applies 30% opacity to past data in projection mode. */
+function barShapeWithPastOpacity(props: {
+  x?: number
+  y?: number
+  width?: number
+  height?: number
+  fill?: string
+  stroke?: string
+  strokeWidth?: number
+  radius?: number[]
+  payload?: { isPast?: boolean }
+}) {
+  const { x = 0, y = 0, width = 0, height = 0, fill, stroke, strokeWidth, radius, payload } = props
+  const opacity = payload?.isPast ? PAST_DATA_OPACITY : 1
+  const [r0, r1, r2, r3] = radius ?? [0, 0, 0, 0]
+  const rx = width > 0 ? Math.min(r0 ?? 0, width / 2) : 0
+  const ry = height > 0 ? Math.min(r1 ?? 0, height / 2) : 0
+  return (
+    <rect
+      x={x}
+      y={y}
+      width={width}
+      height={height}
+      fill={fill}
+      fillOpacity={opacity}
+      stroke={stroke}
+      strokeWidth={strokeWidth}
+      rx={rx}
+      ry={ry}
+    />
+  )
 }
 
 function InventoryProjectionTooltip({
@@ -152,8 +187,16 @@ function InventoryProjectionTooltip({
 
   const erp = byKey.get("erp")
   const opp = byKey.get("opp")
-  const target = byKey.get("target")
-  const lineKeys = new Set(["erp", "opp", "target"])
+  const target = byKey.get("target") ?? byKey.get("targetPast") ?? byKey.get("targetFuture")
+  const lineKeys = new Set([
+    "erp",
+    "erpPast",
+    "erpFuture",
+    "opp",
+    "target",
+    "targetPast",
+    "targetFuture",
+  ])
   const barEntries = payload.filter(
     (p): p is { dataKey: string; value?: number; name?: string; color?: string } =>
       p?.dataKey != null && !lineKeys.has(String(p.dataKey))
@@ -165,27 +208,6 @@ function InventoryProjectionTooltip({
       <div className="text-base font-semibold text-foreground">{label}</div>
 
       <div className="mt-3 space-y-3">
-        {erp != null ? (
-          <div className="flex items-center justify-between gap-6">
-            <div className="flex items-center gap-2">
-              <span
-                className="inline-block w-4"
-                style={{
-                  height: 0,
-                  borderTop: `2px solid ${LINE_COLORS.erp}`,
-                  borderRadius: 999,
-                }}
-              />
-              <span className="text-sm font-medium text-foreground">
-                Days Inventory Outstanding (DIO)
-              </span>
-            </div>
-            <span className="text-sm font-semibold text-foreground">
-              {tooltipValueFormatter(erp)}
-            </span>
-          </div>
-        ) : null}
-
         {opp != null ? (
           <div className="flex items-center justify-between gap-6">
             <div className="flex items-center gap-2">
@@ -219,7 +241,7 @@ function InventoryProjectionTooltip({
                 }}
               />
               <span className="text-sm font-medium text-foreground">
-                Target DIO
+                Projected stock
               </span>
             </div>
             <span className="text-sm font-semibold text-foreground">
@@ -319,6 +341,11 @@ export function InventoryProjectionCard() {
     return endOfDay(now)
   }, [chartMode, dateRange.from, dateRange.to, now])
 
+  const trendFrom = React.useMemo(() => {
+    if (chartMode === "snapshot") return rangeFrom
+    return startOfDay(new Date(2026, 0, 1))
+  }, [chartMode, rangeFrom])
+
   const opps = React.useMemo(
     () =>
       buildProjectionOpps({
@@ -352,18 +379,22 @@ export function InventoryProjectionCard() {
         opps,
         rangeFrom,
         rangeTo,
+        trendFrom: chartMode === "projection" ? trendFrom : undefined,
+        futureStart: rangeFrom,
       }),
-    [chartMode, mode, opps, rangeFrom, rangeTo]
+    [chartMode, mode, opps, rangeFrom, rangeTo, trendFrom]
   )
 
   const breakdownSeries = React.useMemo(() => buildProjectedBreakdownSeries(data), [data])
 
   const chartData = React.useMemo(() => {
+    const futureStartTime = rangeFrom.getTime()
     const base = data.map((point, index) => ({
       ...point,
       ...(breakdownSeries[index] ?? {}),
+      isPast: point.date.getTime() < futureStartTime,
     }))
-    return base.map((point) => {
+    return base.map((point, i) => {
       const totalK = point.erp ?? 0
       const seed = point.label ?? ""
       const warehouseValues = splitBySeed(totalK, `${seed}-warehouse`, WAREHOUSES.length)
@@ -386,14 +417,27 @@ export function InventoryProjectionCard() {
       CUSTOM_FIELD_OPTIONS.forEach((opt, i) => {
         customFieldEntries[opt.key] = customFieldValues[i] ?? 0
       })
-      return { ...point, ...warehouseEntries, ...plantEntries, ...statusEntries, ...customFieldEntries }
+      const isPast = point.date.getTime() < futureStartTime
+      const isFirstFuturePoint = !isPast && (i === 0 || base[i - 1].date.getTime() < futureStartTime)
+      return {
+        ...point,
+        ...warehouseEntries,
+        ...plantEntries,
+        ...statusEntries,
+        ...customFieldEntries,
+        isPast,
+        erpPast: isPast ? point.erp : null,
+        erpFuture: !isPast ? point.erp : null,
+        targetPast: isPast || isFirstFuturePoint ? point.target : null,
+        targetFuture: !isPast ? point.target : null,
+      }
     })
-  }, [data, breakdownSeries])
+  }, [data, breakdownSeries, rangeFrom])
 
   const caption =
     chartMode === "snapshot"
       ? "Inventory as of today"
-      : `Projected from ${formatCaptionDate(rangeFrom)} to ${formatCaptionDate(rangeTo)}`
+      : `Trend from ${formatCaptionDate(trendFrom)} to ${formatCaptionDate(rangeTo)}`
 
   const handleChartClick = React.useCallback(
     (e: any) => {
@@ -436,15 +480,15 @@ export function InventoryProjectionCard() {
 
   return (
     <WidgetCard
-      title={chartMode === "snapshot" ? "Current Inventory Position" : "Projected Inventory"}
+      title={chartMode === "snapshot" ? "Current Inventory Position" : "Inventory breakdown"}
       tooltip={
         chartMode === "snapshot"
           ? "Inventory position as of today (snapshot)."
-          : "DIO reflects Inventory Year on Year / Cost of Sales. Comparison with projected inventory if all not-snoozed opportunities are applied."
+          : "Stacked inventory value. With opportunities applies only from today onward. For DIO trend see the Inventory trend widget."
       }
       subtitle={caption}
       size="l"
-      className="h-full w-full"
+      className="h-full w-full flex-1 min-w-0"
       headerRight={
         <div className="flex items-center gap-2">
           <Select value={mode} onValueChange={(v) => setMode(v as ViewMode)}>
@@ -514,7 +558,7 @@ export function InventoryProjectionCard() {
                   className="mr-2 inline-block w-4"
                   style={{ height: 0, borderTop: `2px solid ${LINE_COLORS.target}` }}
                 />
-                {showTarget ? "Hide Target DIO" : "Show Target DIO"}
+                {showTarget ? "Hide Projected stock" : "Show Projected stock"}
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
@@ -563,24 +607,36 @@ export function InventoryProjectionCard() {
               wrapperStyle={{ paddingTop: 24 }}
               content={({ payload }) => {
                 if (!payload?.length) return null
-                const items = payload.map((entry) => {
+                const lineKeysToMerge = ["targetPast", "targetFuture"]
+                const lineKeysToExclude = ["erpPast", "erpFuture"]
+                const seen = new Set<string>()
+                const merged = payload.filter((entry) => {
+                  const key = String(entry.dataKey)
+                  if (lineKeysToMerge.includes(key) || lineKeysToExclude.includes(key)) return false
+                  if (seen.has(key)) return false
+                  seen.add(key)
+                  return true
+                })
+                const targetEntry = payload.find(
+                  (e) => e.dataKey === "targetPast" || e.dataKey === "targetFuture"
+                )
+                if (targetEntry) {
+                  merged.push({ ...targetEntry, dataKey: "target", value: "target" })
+                }
+                const items = merged.map((entry) => {
                       const key = String(entry.dataKey)
                       const label =
-                        key === "erp"
+                        key === "opp"
                           ? chartMode === "snapshot"
-                            ? "DIO (today)"
-                            : "Days Inventory Outstanding (DIO)"
-                          : key === "opp"
+                            ? "Opportunities (potential)"
+                            : "With Opportunities"
+                          : key === "target"
                             ? chartMode === "snapshot"
-                              ? "Opportunities (potential)"
-                              : "With Opportunities"
-                            : key === "target"
-                              ? chartMode === "snapshot"
-                                ? "Target DIO (today)"
-                                : "Target DIO"
-                              : entry.value ?? key
+                              ? "Projected stock (today)"
+                              : "Projected stock"
+                            : entry.value ?? key
 
-                      const isLine = key === "erp" || key === "opp" || key === "target"
+                      const isLine = key === "opp" || key === "target"
                       return (
                         <div
                           key={key}
@@ -589,13 +645,13 @@ export function InventoryProjectionCard() {
                         >
                           {isLine ? (
                             <span
-                              className="inline-block w-4"
+                              className="inline-block w-5"
                               style={{
                                 height: 0,
-                                borderTop:
-                                  key === "opp"
-                                    ? `2px dashed ${LINE_COLORS.opp}`
-                                    : `2px solid ${key === "target" ? LINE_COLORS.target : LINE_COLORS.erp}`,
+                                borderTopWidth: 2,
+                                borderTopStyle: key === "opp" ? "dashed" : "solid",
+                                borderTopColor:
+                                  key === "opp" ? LINE_COLORS.opp : LINE_COLORS.target,
                                 borderRadius: 999,
                               }}
                             />
@@ -631,6 +687,7 @@ export function InventoryProjectionCard() {
                   stroke={BAR_SEPARATOR_STROKE}
                   strokeWidth={1}
                   maxBarSize={48}
+                  shape={barShapeWithPastOpacity}
                 />
               )}
             {stackBy === "type" && (
@@ -639,19 +696,21 @@ export function InventoryProjectionCard() {
                       dataKey="rawMaterialK"
                       name="Raw Material"
                       stackId="inventory"
-                      fill={STAGE_COLORS.raw_material}
+                      fill={STACKED_BAR_TEAL.raw_material}
                       stroke={BAR_SEPARATOR_STROKE}
                       strokeWidth={1}
                       maxBarSize={48}
+                      shape={barShapeWithPastOpacity}
                     />
                     <Bar
                       dataKey="wipK"
                       name="WIP"
                       stackId="inventory"
-                      fill={STAGE_COLORS.wip}
+                      fill={STACKED_BAR_TEAL.wip}
                       stroke={BAR_SEPARATOR_STROKE}
                       strokeWidth={1}
                       maxBarSize={48}
+                      shape={barShapeWithPastOpacity}
                     />
                     <Bar
                       dataKey="finishedGoodsK"
@@ -662,6 +721,7 @@ export function InventoryProjectionCard() {
                       stroke={BAR_SEPARATOR_STROKE}
                       strokeWidth={1}
                       maxBarSize={48}
+                      shape={barShapeWithPastOpacity}
                     />
                   </>
                 )}
@@ -675,6 +735,7 @@ export function InventoryProjectionCard() {
                     stroke={BAR_SEPARATOR_STROKE}
                     strokeWidth={1}
                     maxBarSize={48}
+                    shape={barShapeWithPastOpacity}
                   />
                 )}
                 {stackBy === "storageLocation" &&
@@ -689,6 +750,7 @@ export function InventoryProjectionCard() {
                       strokeWidth={1}
                       maxBarSize={48}
                       radius={i === WAREHOUSE_KEYS.length - 1 ? [4, 4, 0, 0] : undefined}
+                      shape={barShapeWithPastOpacity}
                     />
                   ))}
                 {stackBy === "plant" &&
@@ -703,6 +765,7 @@ export function InventoryProjectionCard() {
                       strokeWidth={1}
                       maxBarSize={48}
                       radius={i === PLANTS.length - 1 ? [4, 4, 0, 0] : undefined}
+                      shape={barShapeWithPastOpacity}
                     />
                   ))}
                 {stackBy === "status" &&
@@ -717,6 +780,7 @@ export function InventoryProjectionCard() {
                       strokeWidth={1}
                       maxBarSize={48}
                       radius={i === STATUS_OPTIONS.length - 1 ? [4, 4, 0, 0] : undefined}
+                      shape={barShapeWithPastOpacity}
                     />
                   ))}
                 {stackBy === "customField" &&
@@ -731,67 +795,105 @@ export function InventoryProjectionCard() {
                       strokeWidth={1}
                       maxBarSize={48}
                       radius={i === CUSTOM_FIELD_OPTIONS.length - 1 ? [4, 4, 0, 0] : undefined}
+                      shape={barShapeWithPastOpacity}
                     />
                   ))}
 
-            <Line
-              type="monotone"
-              dataKey="erp"
-              stroke={LINE_COLORS.erp}
-              strokeWidth={2.5}
-              dot={false}
-              activeDot={{ r: 4, stroke: "#ffffff", strokeWidth: 2, fill: LINE_COLORS.erp }}
-              opacity={chartMode === "snapshot" ? 0.95 : 1}
-            />
-
             {showOpp ? (
-              <Line
-                type="monotone"
-                dataKey="opp"
-                stroke={LINE_COLORS.opp}
-                strokeWidth={2.5}
-                strokeDasharray="5 5"
-                dot={false}
-                activeDot={{
-                  r: 4,
-                  stroke: "#ffffff",
-                  strokeWidth: 2,
-                  strokeDasharray: "0",
-                  fill: LINE_COLORS.opp,
-                }}
-                opacity={chartMode === "snapshot" ? 0.45 : 1}
-              />
+              <>
+                <Line
+                  type="monotone"
+                  dataKey="opp"
+                  stroke="#ffffff"
+                  strokeWidth={2.5 + LINE_WHITE_STROKE_OFFSET}
+                  strokeDasharray="5 5"
+                  dot={false}
+                  connectNulls={false}
+                  legendType="none"
+                  isAnimationActive={false}
+                  opacity={chartMode === "snapshot" ? 0.45 : 1}
+                />
+                <Line
+                  type="monotone"
+                  dataKey="opp"
+                  stroke={LINE_COLORS.opp}
+                  strokeWidth={2.5}
+                  strokeDasharray="5 5"
+                  dot={false}
+                  connectNulls={false}
+                  activeDot={{
+                    r: 4,
+                    stroke: "#ffffff",
+                    strokeWidth: 2,
+                    strokeDasharray: "0",
+                    fill: LINE_COLORS.opp,
+                  }}
+                  opacity={chartMode === "snapshot" ? 0.45 : 1}
+                />
+              </>
             ) : null}
 
             {showTarget ? (
-              <Line
-                type="monotone"
-                dataKey="target"
-                stroke={LINE_COLORS.target}
-                strokeWidth={2}
-                dot={false}
-                activeDot={{ r: 4, stroke: "#ffffff", strokeWidth: 2, fill: LINE_COLORS.target }}
-                opacity={chartMode === "snapshot" ? 0.7 : 1}
-              />
+              <>
+                <Line
+                  type="monotone"
+                  dataKey={chartMode === "projection" ? "targetPast" : "target"}
+                  stroke="#ffffff"
+                  strokeWidth={2 + LINE_WHITE_STROKE_OFFSET}
+                  dot={false}
+                  connectNulls={chartMode === "projection"}
+                  legendType="none"
+                  isAnimationActive={false}
+                  opacity={chartMode === "snapshot" ? 0.7 : PAST_DATA_OPACITY}
+                />
+                {chartMode === "projection" ? (
+                  <Line
+                    type="monotone"
+                    dataKey="targetFuture"
+                    stroke="#ffffff"
+                    strokeWidth={2 + LINE_WHITE_STROKE_OFFSET}
+                    dot={false}
+                    connectNulls={false}
+                    legendType="none"
+                    isAnimationActive={false}
+                    opacity={1}
+                  />
+                ) : null}
+                <Line
+                  type="monotone"
+                  dataKey={chartMode === "projection" ? "targetPast" : "target"}
+                  stroke={LINE_COLORS.target}
+                  strokeWidth={2}
+                  dot={false}
+                  connectNulls={chartMode === "projection"}
+                  activeDot={{ r: 4, stroke: "#ffffff", strokeWidth: 2, fill: LINE_COLORS.target }}
+                  opacity={chartMode === "snapshot" ? 0.7 : PAST_DATA_OPACITY}
+                />
+                {chartMode === "projection" ? (
+                  <Line
+                    type="monotone"
+                    dataKey="targetFuture"
+                    stroke={LINE_COLORS.target}
+                    strokeWidth={2}
+                    dot={false}
+                    connectNulls={false}
+                    activeDot={{ r: 4, stroke: "#ffffff", strokeWidth: 2, fill: LINE_COLORS.target }}
+                    opacity={1}
+                  />
+                ) : null}
+              </>
             ) : null}
           </ComposedChart>
         </ResponsiveContainer>
       </div>
       <BottomSheetModal
         open={open}
-        title="Opportunities"
+        title="Part book"
         subtitle={periodLabel ?? undefined}
         onClose={() => setOpen(false)}
       >
         {periodRange ? (
-          <OpportunitiesTable
-            showToolbar
-            includeSnoozed={false}
-            excludeStatuses={["Canceled"]}
-            overrideDateRange={periodRange}
-            useRawInventoryValue
-            disableModeFilter
-          />
+          <PartbookTable filter={null} />
         ) : null}
       </BottomSheetModal>
     </WidgetCard>

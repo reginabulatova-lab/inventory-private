@@ -20,6 +20,15 @@ export const OPPORTUNITY_TYPE_OPTIONS: SuggestedAction[] = [
 
 export type OpportunityPriority = "P1" | "P2" | "P3" | "P4"
 
+/** Scrap/Sell pipeline status (used when suggestedAction === "Scrap/Sell"). */
+export type ScrapSellStatus =
+  | "New"
+  | "Qualified"
+  | "Proposed"
+  | "Confirmed"
+  | "Executed"
+  | "Cancelled"
+
 /**
  * Single source of truth for opportunities used across the app.
  * Keep it "UI-agnostic" so both tables + widgets can derive from it.
@@ -64,6 +73,10 @@ export type Opportunity = {
   // STO-specific (for suggestedAction === "STO")
   currentStorageLocation?: string
   targetStorageLocation?: string
+
+  // Scrap/Sell-specific (for suggestedAction === "Scrap/Sell")
+  quantity?: number
+  scrapSellStatus?: ScrapSellStatus
 
   snoozeRuleIds?: string[]
   prevStatus?: OpportunityStatus

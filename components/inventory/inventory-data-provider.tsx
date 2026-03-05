@@ -2,7 +2,7 @@
 
 import * as React from "react"
 import { usePathname } from "next/navigation"
-import type { Opportunity, Plan } from "@/lib/inventory/types"
+import type { Opportunity, Plan, ScrapSellStatus } from "@/lib/inventory/types"
 import {
   computeHealthRiskKPIs,
   filterOpportunitiesByMode,
@@ -255,6 +255,8 @@ type InventoryDataContextValue = {
   setTeamByIds: (ids: string[], team: Opportunity["team"]) => void
   setDeliveryDateByIds: (ids: string[], deliveryDate: Opportunity["deliveryDate"]) => void
   setPriorityByIds: (ids: string[], priority: Opportunity["priority"]) => void
+  setScrapSellStatusByIds: (ids: string[], status: ScrapSellStatus) => void
+  setQuantityByIds: (ids: string[], quantity: number) => void
   applyPushOutByIds: (ids: string[]) => void
 
   escalationTickets: Record<string, EscalationTicket | undefined>
@@ -668,6 +670,23 @@ export function InventoryDataProvider({ children }: { children: React.ReactNode 
     []
   )
 
+  const setScrapSellStatusByIds = React.useCallback(
+    (ids: string[], scrapSellStatus: ScrapSellStatus) => {
+      if (ids.length === 0) return
+      setOpportunities((prev) =>
+        prev.map((o) => (ids.includes(o.id) ? { ...o, scrapSellStatus } : o))
+      )
+    },
+    []
+  )
+
+  const setQuantityByIds = React.useCallback((ids: string[], quantity: number) => {
+    if (ids.length === 0) return
+    setOpportunities((prev) =>
+      prev.map((o) => (ids.includes(o.id) ? { ...o, quantity } : o))
+    )
+  }, [])
+
   const applyPushOutByIds = React.useCallback((ids: string[]) => {
     if (ids.length === 0) return
     setOpportunities((prev) =>
@@ -761,6 +780,8 @@ export function InventoryDataProvider({ children }: { children: React.ReactNode 
       setTeamByIds,
       setDeliveryDateByIds,
       setPriorityByIds,
+      setScrapSellStatusByIds,
+      setQuantityByIds,
       applyPushOutByIds,
       escalationTickets,
       upsertEscalationTicket,
@@ -801,6 +822,8 @@ export function InventoryDataProvider({ children }: { children: React.ReactNode 
       setTeamByIds,
       setDeliveryDateByIds,
       setPriorityByIds,
+      setScrapSellStatusByIds,
+      setQuantityByIds,
       applyPushOutByIds,
       escalationTickets,
       upsertEscalationTicket,

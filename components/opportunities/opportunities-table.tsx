@@ -10,7 +10,7 @@ import {
   type EscalationTicket,
   type OpportunityFilters,
 } from "@/components/inventory/inventory-data-provider"
-import type { Opportunity, OpportunityPriority } from "@/lib/inventory/types"
+import type { Opportunity, OpportunityPriority, ScrapSellStatus } from "@/lib/inventory/types"
 import {
   calcTimeToActDays,
   PRIORITY_ORDER,
@@ -301,6 +301,8 @@ export function OpportunitiesTable({
     setTeamByIds,
     setDeliveryDateByIds,
     setPriorityByIds,
+    setScrapSellStatusByIds,
+    setQuantityByIds,
     applyPushOutByIds,
     escalationTickets,
     upsertEscalationTicket,
@@ -412,7 +414,7 @@ export function OpportunitiesTable({
   const [commentDraft, setCommentDraft] = React.useState("")
   const [, startTransition] = React.useTransition()
   const [sortKey, setSortKey] = React.useState<
-    "inventory" | "timeToAct" | "age" | "timeToStart" | "inProgress" | "suggestedDate"
+    "inventory" | "timeToAct" | "priority" | "age" | "timeToStart" | "inProgress" | "suggestedDate"
   >("inventory")
   const [sortDir, setSortDir] = React.useState<"asc" | "desc">("desc")
   const searchParams = useSearchParams()
@@ -635,6 +637,17 @@ export function OpportunitiesTable({
         const bDays = bMeta?.timeToStartDays ?? Infinity
         const diff = aDays - bDays
         if (diff !== 0) return sortDir === "asc" ? diff : -diff
+      } else if (sortKey === "priority") {
+        const aRow = rowById.get(aId)
+        const bRow = rowById.get(bId)
+        if (aRow && bRow) {
+          const aPri = PRIORITY_ORDER.indexOf(resolveOpportunityPriority(aRow, now))
+          const bPri = PRIORITY_ORDER.indexOf(resolveOpportunityPriority(bRow, now))
+          const priA = aPri < 0 ? PRIORITY_ORDER.length : aPri
+          const priB = bPri < 0 ? PRIORITY_ORDER.length : bPri
+          const diff = priA - priB
+          if (diff !== 0) return sortDir === "asc" ? diff : -diff
+        }
       } else if (sortKey === "inProgress") {
         const aDays = aMeta?.inProgressDays ?? Infinity
         const bDays = bMeta?.inProgressDays ?? Infinity
@@ -850,9 +863,69 @@ export function OpportunitiesTable({
                   />
                 </TableHead>
                 <TableHead>Opportunity type</TableHead>
-                <TableHead>Time to Act</TableHead>
-                <TableHead>Priority</TableHead>
-                <TableHead className="text-right">Value</TableHead>
+                <TableHead>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (sortKey !== "timeToAct") {
+                        setSortKey("timeToAct")
+                        setSortDir("asc")
+                        return
+                      }
+                      setSortDir((prev) => (prev === "asc" ? "desc" : "asc"))
+                    }}
+                    className="inline-flex items-center gap-1 text-left font-medium"
+                  >
+                    Time to Act
+                    <ArrowDown
+                      className={`h-3.5 w-3.5 text-muted-foreground transition-transform ${
+                        sortKey === "timeToAct" && sortDir === "asc" ? "rotate-180" : ""
+                      }`}
+                    />
+                  </button>
+                </TableHead>
+                <TableHead>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (sortKey !== "priority") {
+                        setSortKey("priority")
+                        setSortDir("asc")
+                        return
+                      }
+                      setSortDir((prev) => (prev === "asc" ? "desc" : "asc"))
+                    }}
+                    className="inline-flex items-center gap-1 text-left font-medium"
+                  >
+                    Priority
+                    <ArrowDown
+                      className={`h-3.5 w-3.5 text-muted-foreground transition-transform ${
+                        sortKey === "priority" && sortDir === "asc" ? "rotate-180" : ""
+                      }`}
+                    />
+                  </button>
+                </TableHead>
+                <TableHead className="text-right">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (sortKey !== "inventory") {
+                        setSortKey("inventory")
+                        setSortDir("desc")
+                        return
+                      }
+                      setSortDir((prev) => (prev === "asc" ? "desc" : "asc"))
+                    }}
+                    className="inline-flex items-center gap-1 text-right font-medium"
+                  >
+                    Value
+                    <ArrowDown
+                      className={`h-3.5 w-3.5 text-muted-foreground transition-transform ${
+                        sortKey === "inventory" && sortDir === "asc" ? "rotate-180" : ""
+                      }`}
+                    />
+                  </button>
+                </TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead>Team</TableHead>
                 <TableHead>Assignee</TableHead>
@@ -1060,9 +1133,69 @@ export function OpportunitiesTable({
                 <TableHead>Current Storage location</TableHead>
                 <TableHead>Target Storage location</TableHead>
                 <TableHead>Date of the STO</TableHead>
-                <TableHead className="text-right">Value</TableHead>
-                <TableHead>Time to Act</TableHead>
-                <TableHead>Priority</TableHead>
+                <TableHead className="text-right">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (sortKey !== "inventory") {
+                        setSortKey("inventory")
+                        setSortDir("desc")
+                        return
+                      }
+                      setSortDir((prev) => (prev === "asc" ? "desc" : "asc"))
+                    }}
+                    className="inline-flex items-center gap-1 text-right font-medium"
+                  >
+                    Value
+                    <ArrowDown
+                      className={`h-3.5 w-3.5 text-muted-foreground transition-transform ${
+                        sortKey === "inventory" && sortDir === "asc" ? "rotate-180" : ""
+                      }`}
+                    />
+                  </button>
+                </TableHead>
+                <TableHead>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (sortKey !== "timeToAct") {
+                        setSortKey("timeToAct")
+                        setSortDir("asc")
+                        return
+                      }
+                      setSortDir((prev) => (prev === "asc" ? "desc" : "asc"))
+                    }}
+                    className="inline-flex items-center gap-1 text-left font-medium"
+                  >
+                    Time to Act
+                    <ArrowDown
+                      className={`h-3.5 w-3.5 text-muted-foreground transition-transform ${
+                        sortKey === "timeToAct" && sortDir === "asc" ? "rotate-180" : ""
+                      }`}
+                    />
+                  </button>
+                </TableHead>
+                <TableHead>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (sortKey !== "priority") {
+                        setSortKey("priority")
+                        setSortDir("asc")
+                        return
+                      }
+                      setSortDir((prev) => (prev === "asc" ? "desc" : "asc"))
+                    }}
+                    className="inline-flex items-center gap-1 text-left font-medium"
+                  >
+                    Priority
+                    <ArrowDown
+                      className={`h-3.5 w-3.5 text-muted-foreground transition-transform ${
+                        sortKey === "priority" && sortDir === "asc" ? "rotate-180" : ""
+                      }`}
+                    />
+                  </button>
+                </TableHead>
                 <TableHead>Age</TableHead>
                 <TableHead>Time to Start</TableHead>
                 <TableHead>In Progress</TableHead>
@@ -1070,7 +1203,7 @@ export function OpportunitiesTable({
                 <TableHead>Team</TableHead>
                 <TableHead>Assignee</TableHead>
                 <TableHead>Order</TableHead>
-                <TableHead>Esc. ticket</TableHead>
+                <TableHead>Esc.</TableHead>
                 <TableHead>Buyer code</TableHead>
                 <TableHead>MRP code</TableHead>
               </TableRow>
@@ -1092,8 +1225,30 @@ export function OpportunitiesTable({
                       />
                     </TableCell>
                     <TableCell className="font-medium">STO</TableCell>
-                    <TableCell>{r.partName}</TableCell>
-                    <TableCell>{r.partNumber}</TableCell>
+                    <TableCell>
+                      <button
+                        type="button"
+                        className="font-medium text-blue-700 hover:text-blue-900"
+                        onClick={() => {
+                          setPanelRow(r)
+                          setOpenPanel(true)
+                        }}
+                      >
+                        {r.partName}
+                      </button>
+                    </TableCell>
+                    <TableCell>
+                      <button
+                        type="button"
+                        className="font-medium text-blue-700 hover:text-blue-900"
+                        onClick={() => {
+                          setPanelRow(r)
+                          setOpenPanel(true)
+                        }}
+                      >
+                        {r.partNumber}
+                      </button>
+                    </TableCell>
                     <TableCell>{r.currentStorageLocation ?? "—"}</TableCell>
                     <TableCell>{r.targetStorageLocation ?? "—"}</TableCell>
                     <TableCell>{meta?.suggestedDateLabel ?? "—"}</TableCell>
@@ -1173,20 +1328,395 @@ export function OpportunitiesTable({
                         </SelectContent>
                       </Select>
                     </TableCell>
-                    <TableCell>{r.team || "—"}</TableCell>
-                    <TableCell>{r.assignee || "—"}</TableCell>
-                    <TableCell>{r.orderNumber}</TableCell>
+                    <TableCell>
+                      <Select
+                        value={r.team || EMPTY_OPTION}
+                        onValueChange={(value) =>
+                          setTeamByIds([r.id], value === EMPTY_OPTION ? "" : value)
+                        }
+                      >
+                        <SelectTrigger className="h-8 w-[180px] border-0 bg-transparent px-2 text-sm shadow-none hover:bg-muted/40 data-[state=open]:bg-muted/60">
+                          <SelectValue placeholder="—" />
+                        </SelectTrigger>
+                        <SelectContent align="start">
+                          {teamOptions.map((team) => (
+                            <SelectItem key={team} value={team}>
+                              {team === EMPTY_OPTION ? "—" : team}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </TableCell>
+                    <TableCell>
+                      <Select
+                        value={r.assignee || EMPTY_OPTION}
+                        onValueChange={(value) =>
+                          setAssigneeByIds([r.id], value === EMPTY_OPTION ? "" : value)
+                        }
+                      >
+                        <SelectTrigger className="h-8 w-[160px] border-0 bg-transparent px-2 text-sm shadow-none hover:bg-muted/40 data-[state=open]:bg-muted/60">
+                          <SelectValue placeholder="—" />
+                        </SelectTrigger>
+                        <SelectContent align="start">
+                          {assigneeOptions.map((assignee) => (
+                            <SelectItem key={assignee} value={assignee}>
+                              {assignee === EMPTY_OPTION ? "—" : assignee}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </TableCell>
+                    <TableCell>
+                      <button
+                        type="button"
+                        className="font-medium text-blue-700 hover:text-blue-900"
+                        onClick={() => {
+                          setPanelRow(r)
+                          setOpenPanel(true)
+                        }}
+                      >
+                        {r.orderNumber}
+                      </button>
+                    </TableCell>
                     <TableCell>
                       {escalationTickets[r.partNumber] ? (
-                        <Badge className={ticketBadgeClass(escalationTickets[r.partNumber]!.level)}>
-                          L{escalationTickets[r.partNumber]!.level}
-                        </Badge>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setActiveTicket(escalationTickets[r.partNumber] ?? null)
+                            setOpenTicketPanel(true)
+                          }}
+                          className="inline-flex"
+                          aria-label="View ticket"
+                        >
+                          <Badge className={ticketBadgeClass(escalationTickets[r.partNumber]!.level)}>
+                            L{escalationTickets[r.partNumber]!.level}
+                          </Badge>
+                        </button>
                       ) : (
-                        "—"
+                        <button
+                          type="button"
+                          className="inline-flex h-8 w-8 items-center justify-center rounded-md hover:bg-accent"
+                          onClick={() => {
+                            const ticket: EscalationTicket = {
+                              id: `TCK-${1000 + Number(r.id.replace(/\D/g, ""))}`,
+                              level: 1,
+                              createdAt: new Date().toISOString(),
+                              team: r.team || "Supply",
+                              partName: r.partName,
+                              partNumber: r.partNumber,
+                              description: "Escalation ticket created for part review.",
+                            }
+                            upsertEscalationTicket(ticket)
+                            setActiveTicket(ticket)
+                            setOpenTicketPanel(true)
+                          }}
+                          aria-label="Create ticket"
+                        >
+                          <Files className="h-4 w-4 text-muted-foreground" />
+                        </button>
                       )}
                     </TableCell>
                     <TableCell>{r.buyerCode}</TableCell>
                     <TableCell>{r.mrpCode}</TableCell>
+                  </TableRow>
+                )
+              })}
+            </TableBody>
+          </Table>
+        ) : opportunityTypeView === "scrap-sell" ? (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead className="w-[48px]">
+                  <Checkbox
+                    checked={allChecked ? true : indeterminate ? "indeterminate" : false}
+                    onCheckedChange={(v) => toggleAll(Boolean(v))}
+                    aria-label="Select all"
+                  />
+                </TableHead>
+                <TableHead>Opportunity type</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead>Plant</TableHead>
+                <TableHead>Esc.</TableHead>
+                <TableHead>Part Name</TableHead>
+                <TableHead>Part Number</TableHead>
+                <TableHead className="text-right">Quantity</TableHead>
+                <TableHead className="text-right">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (sortKey !== "inventory") {
+                        setSortKey("inventory")
+                        setSortDir("desc")
+                        return
+                      }
+                      setSortDir((prev) => (prev === "asc" ? "desc" : "asc"))
+                    }}
+                    className="inline-flex items-center gap-1 text-right font-medium"
+                  >
+                    Value
+                    <ArrowDown
+                      className={`h-3.5 w-3.5 text-muted-foreground transition-transform ${
+                        sortKey === "inventory" && sortDir === "asc" ? "rotate-180" : ""
+                      }`}
+                    />
+                  </button>
+                </TableHead>
+                <TableHead>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (sortKey !== "timeToAct") {
+                        setSortKey("timeToAct")
+                        setSortDir("asc")
+                        return
+                      }
+                      setSortDir((prev) => (prev === "asc" ? "desc" : "asc"))
+                    }}
+                    className="inline-flex items-center gap-1 text-left font-medium"
+                  >
+                    Time to Act
+                    <ArrowDown
+                      className={`h-3.5 w-3.5 text-muted-foreground transition-transform ${
+                        sortKey === "timeToAct" && sortDir === "asc" ? "rotate-180" : ""
+                      }`}
+                    />
+                  </button>
+                </TableHead>
+                <TableHead>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (sortKey !== "priority") {
+                        setSortKey("priority")
+                        setSortDir("asc")
+                        return
+                      }
+                      setSortDir((prev) => (prev === "asc" ? "desc" : "asc"))
+                    }}
+                    className="inline-flex items-center gap-1 text-left font-medium"
+                  >
+                    Priority
+                    <ArrowDown
+                      className={`h-3.5 w-3.5 text-muted-foreground transition-transform ${
+                        sortKey === "priority" && sortDir === "asc" ? "rotate-180" : ""
+                      }`}
+                    />
+                  </button>
+                </TableHead>
+                <TableHead>Age</TableHead>
+                <TableHead>Time to Start</TableHead>
+                <TableHead>In Progress</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead>Team</TableHead>
+                <TableHead>Assignee</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {displayedRowIds.map((rowId) => {
+                const r = rowById.get(rowId)
+                if (!r) return null
+                const meta = rowMeta.get(r.id)
+                const scrapSellStatus = r.scrapSellStatus ?? "New"
+                return (
+                  <TableRow key={r.id} className={r.status === "Snoozed" ? "opacity-60" : ""}>
+                    <TableCell>
+                      <Checkbox
+                        checked={!!selected[r.id]}
+                        onCheckedChange={(v) =>
+                          setSelected((prev) => ({ ...prev, [r.id]: Boolean(v) }))
+                        }
+                        aria-label={`Select ${r.orderNumber}`}
+                      />
+                    </TableCell>
+                    <TableCell className="font-medium">Scrap/Sell</TableCell>
+                    <TableCell>
+                      <span className="text-sm font-medium">{scrapSellStatus}</span>
+                    </TableCell>
+                    <TableCell>{r.plant}</TableCell>
+                    <TableCell>
+                      {escalationTickets[r.partNumber] ? (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setActiveTicket(escalationTickets[r.partNumber] ?? null)
+                            setOpenTicketPanel(true)
+                          }}
+                          className="inline-flex"
+                          aria-label="View ticket"
+                        >
+                          <Badge className={ticketBadgeClass(escalationTickets[r.partNumber]!.level)}>
+                            L{escalationTickets[r.partNumber]!.level}
+                          </Badge>
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          className="inline-flex h-8 w-8 items-center justify-center rounded-md hover:bg-accent"
+                          onClick={() => {
+                            const ticket: EscalationTicket = {
+                              id: `TCK-${1000 + Number(r.id.replace(/\D/g, ""))}`,
+                              level: 1,
+                              createdAt: new Date().toISOString(),
+                              team: r.team || "Supply",
+                              partName: r.partName,
+                              partNumber: r.partNumber,
+                              description: "Escalation ticket created for part review.",
+                            }
+                            upsertEscalationTicket(ticket)
+                            setActiveTicket(ticket)
+                            setOpenTicketPanel(true)
+                          }}
+                          aria-label="Create ticket"
+                        >
+                          <Files className="h-4 w-4 text-muted-foreground" />
+                        </button>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      <button
+                        type="button"
+                        className="font-medium text-blue-700 hover:text-blue-900"
+                        onClick={() => {
+                          setPanelRow(r)
+                          setOpenPanel(true)
+                        }}
+                      >
+                        {r.partName}
+                      </button>
+                    </TableCell>
+                    <TableCell>
+                      <button
+                        type="button"
+                        className="font-medium text-blue-700 hover:text-blue-900"
+                        onClick={() => {
+                          setPanelRow(r)
+                          setOpenPanel(true)
+                        }}
+                      >
+                        {r.partNumber}
+                      </button>
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <span className="text-sm">
+                        {r.quantity != null ? r.quantity.toLocaleString() : "—"}
+                      </span>
+                    </TableCell>
+                    <TableCell className="text-right">
+                      {formatEurCompact(meta?.inventoryValueEur ?? 0)}
+                    </TableCell>
+                    <TableCell>
+                      <TimeToActBadge days={meta?.timeToActDays ?? null} />
+                    </TableCell>
+                    <TableCell>
+                      <Select
+                        value={resolveOpportunityPriority(r, now)}
+                        onValueChange={(value) =>
+                          setPriorityByIds([r.id], value as OpportunityPriority)
+                        }
+                      >
+                        <SelectTrigger className="h-8 w-[110px] border-0 bg-transparent px-2 text-xs font-semibold shadow-none hover:bg-muted/40 data-[state=open]:bg-muted/60">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent align="start">
+                          {PRIORITY_ORDER.map((priority) => (
+                            <SelectItem key={priority} value={priority}>
+                              <PriorityBadge value={priority} />
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </TableCell>
+                    <TableCell>
+                      <Badge className={`border border-transparent ${ageColorClass(meta?.ageDays ?? null)}`}>
+                        {meta?.ageDays != null ? formatAgeDuration(meta.ageDays * 86400000) : "—"}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
+                      {meta?.timeToStartDays == null ? (
+                        <span className="text-sm text-muted-foreground">—</span>
+                      ) : (
+                        <Badge className={`border border-transparent ${waitColorClass(meta.timeToStartDays)}`}>
+                          <span className="inline-flex items-center gap-1">
+                            {r.status === "To Do" ? (
+                              <Clock className="h-3 w-3" />
+                            ) : (
+                              <Check className="h-3 w-3" />
+                            )}
+                            {formatAgeDuration(meta.timeToStartDays * 86400000)}
+                          </span>
+                        </Badge>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      {meta?.inProgressDays == null ? (
+                        <span className="text-sm text-muted-foreground">—</span>
+                      ) : (
+                        <Badge className={`border border-transparent ${inProgressColorClass(meta.inProgressDays)}`}>
+                          {formatAgeDuration(meta.inProgressDays * 86400000)}
+                        </Badge>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      <Select
+                        value={r.status}
+                        onValueChange={(value) => {
+                          const nextStatus = value as Opportunity["status"]
+                          startTransition(() => setStatusByIds([r.id], nextStatus))
+                        }}
+                      >
+                        <SelectTrigger className="h-8 w-[150px] rounded-full border bg-muted/40 px-2 text-xs font-semibold shadow-none hover:bg-muted/60 data-[state=open]:bg-muted/70">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent align="start">
+                          <SelectItem value="Backlog"><StatusLabel status="Backlog" /></SelectItem>
+                          <SelectItem value="To Do"><StatusLabel status="To Do" /></SelectItem>
+                          <SelectItem value="In Progress"><StatusLabel status="In Progress" /></SelectItem>
+                          <SelectItem value="Done"><StatusLabel status="Done" /></SelectItem>
+                          <SelectItem value="Canceled"><StatusLabel status="Canceled" /></SelectItem>
+                          <SelectItem value="Snoozed"><StatusLabel status="Snoozed" /></SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </TableCell>
+                    <TableCell>
+                      <Select
+                        value={r.team || EMPTY_OPTION}
+                        onValueChange={(value) =>
+                          setTeamByIds([r.id], value === EMPTY_OPTION ? "" : value)
+                        }
+                      >
+                        <SelectTrigger className="h-8 w-[180px] border-0 bg-transparent px-2 text-sm shadow-none hover:bg-muted/40 data-[state=open]:bg-muted/60">
+                          <SelectValue placeholder="—" />
+                        </SelectTrigger>
+                        <SelectContent align="start">
+                          {teamOptions.map((team) => (
+                            <SelectItem key={team} value={team}>
+                              {team === EMPTY_OPTION ? "—" : team}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </TableCell>
+                    <TableCell>
+                      <Select
+                        value={r.assignee || EMPTY_OPTION}
+                        onValueChange={(value) =>
+                          setAssigneeByIds([r.id], value === EMPTY_OPTION ? "" : value)
+                        }
+                      >
+                        <SelectTrigger className="h-8 w-[160px] border-0 bg-transparent px-2 text-sm shadow-none hover:bg-muted/40 data-[state=open]:bg-muted/60">
+                          <SelectValue placeholder="—" />
+                        </SelectTrigger>
+                        <SelectContent align="start">
+                          {assigneeOptions.map((assignee) => (
+                            <SelectItem key={assignee} value={assignee}>
+                              {assignee === EMPTY_OPTION ? "—" : assignee}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </TableCell>
                   </TableRow>
                 )
               })}
@@ -1258,13 +1788,73 @@ export function OpportunitiesTable({
                             <TableHead>Opportunity type</TableHead>
                             <TableHead>Suggested Date</TableHead>
                             <TableHead>Delivery date</TableHead>
-                            <TableHead>Time to Act</TableHead>
-                            <TableHead>Priority</TableHead>
+                            <TableHead>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (sortKey !== "timeToAct") {
+                                    setSortKey("timeToAct")
+                                    setSortDir("asc")
+                                    return
+                                  }
+                                  setSortDir((prev) => (prev === "asc" ? "desc" : "asc"))
+                                }}
+                                className="inline-flex items-center gap-1 text-left font-medium"
+                              >
+                                Time to Act
+                                <ArrowDown
+                                  className={`h-3.5 w-3.5 text-muted-foreground transition-transform ${
+                                    sortKey === "timeToAct" && sortDir === "asc" ? "rotate-180" : ""
+                                  }`}
+                                />
+                              </button>
+                            </TableHead>
+                            <TableHead>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (sortKey !== "priority") {
+                                    setSortKey("priority")
+                                    setSortDir("asc")
+                                    return
+                                  }
+                                  setSortDir((prev) => (prev === "asc" ? "desc" : "asc"))
+                                }}
+                                className="inline-flex items-center gap-1 text-left font-medium"
+                              >
+                                Priority
+                                <ArrowDown
+                                  className={`h-3.5 w-3.5 text-muted-foreground transition-transform ${
+                                    sortKey === "priority" && sortDir === "asc" ? "rotate-180" : ""
+                                  }`}
+                                />
+                              </button>
+                            </TableHead>
                             <TableHead>Status</TableHead>
                             <TableHead>Order number</TableHead>
                             <TableHead>Part Name</TableHead>
                             <TableHead>Part Number</TableHead>
-                            <TableHead className="text-right">Value</TableHead>
+                            <TableHead className="text-right">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (sortKey !== "inventory") {
+                                    setSortKey("inventory")
+                                    setSortDir("desc")
+                                    return
+                                  }
+                                  setSortDir((prev) => (prev === "asc" ? "desc" : "asc"))
+                                }}
+                                className="inline-flex items-center gap-1 text-right font-medium"
+                              >
+                                Value
+                                <ArrowDown
+                                  className={`h-3.5 w-3.5 text-muted-foreground transition-transform ${
+                                    sortKey === "inventory" && sortDir === "asc" ? "rotate-180" : ""
+                                  }`}
+                                />
+                              </button>
+                            </TableHead>
                           </TableRow>
                         </TableHeader>
                         <TableBody>
@@ -1472,7 +2062,27 @@ export function OpportunitiesTable({
                   </TooltipProvider>
                 </div>
               </TableHead>
-              <TableHead>Priority</TableHead>
+              <TableHead>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (sortKey !== "priority") {
+                      setSortKey("priority")
+                      setSortDir("asc")
+                      return
+                    }
+                    setSortDir((prev) => (prev === "asc" ? "desc" : "asc"))
+                  }}
+                  className="inline-flex items-center gap-1 text-left"
+                >
+                  Priority
+                  <ArrowDown
+                    className={`h-3.5 w-3.5 text-muted-foreground transition-transform ${
+                      sortKey === "priority" && sortDir === "asc" ? "rotate-180" : ""
+                    }`}
+                  />
+                </button>
+              </TableHead>
               <TableHead>
                 <div className="flex items-center gap-1">
                   <button

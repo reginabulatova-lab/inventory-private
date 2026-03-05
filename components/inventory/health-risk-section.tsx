@@ -3,6 +3,7 @@
 import * as React from "react"
 import { WidgetCard } from "@/components/inventory/kpi-card"
 import { InventoryProjectionCard } from "@/components/inventory/inventory-projection-card"
+import { InventoryDioTrendCard } from "@/components/inventory/inventory-dio-trend-card"
 import { BottomSheetModal } from "@/components/inventory/bottom-sheet-modal"
 import { PartbookTable } from "@/components/inventory/partbook-table"
 import {
@@ -622,10 +623,13 @@ export function HealthRiskSection() {
       </div>
 
       <h2 className="text-2xl font-semibold tracking-tight text-foreground mt-10 mb-4">
-        Projected inventory
+        Inventory trend
       </h2>
       <div className="grid grid-cols-12 gap-6 items-stretch">
-        <div className="col-span-12 flex">
+        <div className="col-span-4 flex min-h-0">
+          <InventoryDioTrendCard />
+        </div>
+        <div className="col-span-8 flex min-h-0">
           <InventoryProjectionCard />
         </div>
       </div>

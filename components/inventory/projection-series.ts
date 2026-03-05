@@ -26,7 +26,7 @@ export type ProjectionPoint = {
   label: string
   date: Date
   erp: number // in K€
-  opp: number // in K€
+  opp: number | null // in K€; null for past (with-opportunities only in future)
   target: number // in K€
 }
 
@@ -180,9 +180,14 @@ export function buildProjectionSeries(options: {
   opps: OppInput[]
   rangeFrom: Date
   rangeTo: Date
+  /** When set (projection mode), series starts from this date to show past trend. */
+  trendFrom?: Date
+  /** Start of "future" for opp line; points before this get opp = null. Defaults to rangeFrom. */
+  futureStart?: Date
 }): ProjectionPoint[] {
-  const { chartMode, viewMode, opps, rangeFrom, rangeTo } = options
+  const { chartMode, viewMode, opps, rangeFrom, rangeTo, trendFrom, futureStart } = options
   const effectiveViewMode = viewMode === "week" || viewMode === "day" ? "month" : viewMode
+  const futureStartTime = (futureStart ?? rangeFrom).getTime()
 
   if (chartMode === "snapshot") {
     const oppK = Math.round(
@@ -195,8 +200,8 @@ export function buildProjectionSeries(options: {
       effectiveViewMode === "month"
         ? ERP_MONTH_TEMPLATE[monthIndex % ERP_MONTH_TEMPLATE.length]
         : ERP_QUARTER_TEMPLATE[quarterIndex % ERP_QUARTER_TEMPLATE.length]
-    const target = Math.max(Math.round(oppK * 1.08), oppK + 15)
-    const erp = Math.max(erpBase, target + Math.max(25, Math.round(target * 0.12)))
+    const erp = Math.max(erpBase, oppK + 40)
+    const target = erp + 100
     return [
       {
         label: "Today",
@@ -208,33 +213,36 @@ export function buildProjectionSeries(options: {
     ]
   }
 
+  const seriesStart = trendFrom ?? rangeFrom
   if (effectiveViewMode === "month") {
-    const rows = buildMonthSeries(rangeFrom, rangeTo, opps)
+    const rows = buildMonthSeries(seriesStart, rangeTo, opps)
     return rows.map((row) => {
       const oppK = Math.round(row.oppEur / 1000)
       const erpBase = ERP_MONTH_TEMPLATE[row.monthIndex % ERP_MONTH_TEMPLATE.length]
-      const target = Math.max(Math.round(oppK * 1.08), oppK + 15)
-      const erp = Math.max(erpBase, target + Math.max(25, Math.round(target * 0.12)))
+      const erp = Math.max(erpBase, oppK + 40)
+      const target = erp + 100
+      const isPast = row.date.getTime() < futureStartTime
       return {
         label: row.label,
         date: row.date,
-        opp: oppK,
+        opp: isPast ? null : oppK,
         erp,
         target,
       }
     })
   }
 
-  const rows = buildQuarterSeries(rangeFrom, rangeTo, opps)
+  const rows = buildQuarterSeries(seriesStart, rangeTo, opps)
   return rows.map((row) => {
     const oppK = Math.round(row.oppEur / 1000)
     const erpBase = ERP_QUARTER_TEMPLATE[row.quarterIndex % ERP_QUARTER_TEMPLATE.length]
-    const target = Math.max(Math.round(oppK * 1.08), oppK + 15)
-    const erp = Math.max(erpBase, target + Math.max(25, Math.round(target * 0.12)))
+    const erp = Math.max(erpBase, oppK + 40)
+    const target = erp + 100
+    const isPast = row.date.getTime() < futureStartTime
     return {
       label: row.label,
       date: row.date,
-      opp: oppK,
+      opp: isPast ? null : oppK,
       erp,
       target,
     }

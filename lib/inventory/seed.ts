@@ -1,4 +1,4 @@
-import type { Opportunity, Plan, OpportunityStatus, SuggestedAction } from "./types"
+import type { Opportunity, Plan, OpportunityStatus, SuggestedAction, ScrapSellStatus } from "./types"
 
 // Small deterministic pseudo-random helper (stable across refreshes)
 function mulberry32(seed: number) {
@@ -59,6 +59,16 @@ function weightedAction(r: () => number): SuggestedAction {
   if (x < 0.76) return "Pull in"
   if (x < 0.88) return "STO"
   return "Scrap/Sell"
+}
+
+function weightedScrapSellStatus(r: () => number): ScrapSellStatus {
+  const x = r()
+  if (x < 0.2) return "New"
+  if (x < 0.4) return "Qualified"
+  if (x < 0.6) return "Proposed"
+  if (x < 0.78) return "Confirmed"
+  if (x < 0.92) return "Executed"
+  return "Cancelled"
 }
 
 function weightedEscLevel(r: () => number): 1 | 2 | 3 | 4 {
@@ -169,6 +179,13 @@ export function seedOpportunities(plan: Plan, count = 220): Opportunity[] {
       targetStorageLocation = others.length > 0 ? pick(r, others) : STORAGE_LOCATIONS[0]
     }
 
+    let quantity: number | undefined
+    let scrapSellStatus: ScrapSellStatus | undefined
+    if (action === "Scrap/Sell") {
+      quantity = 15 + Math.floor(r() * (250 - 15 + 1)) // 15 to 250 inclusive
+      scrapSellStatus = weightedScrapSellStatus(r)
+    }
+
     out.push({
       id: `${plan.toLowerCase()}_opp_${i + 1}`,
       plan,
@@ -219,6 +236,10 @@ export function seedOpportunities(plan: Plan, count = 220): Opportunity[] {
       ...(action === "STO" && {
         currentStorageLocation,
         targetStorageLocation,
+      }),
+      ...(action === "Scrap/Sell" && {
+        quantity,
+        scrapSellStatus,
       }),
     })
   }
